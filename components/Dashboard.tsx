@@ -43,6 +43,7 @@ export default function Dashboard() {
   const [zernioAccounts, setZernioAccounts] = useState<ZernioAccount[]>([]);
   const [publishModal, setPublishModal] = useState<Video | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [subStatus, setSubStatus] = useState<{ plan: "free" | "pro"; usage: { publicationsThisMonth: number; publicationsLimit: number | null } } | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -58,6 +59,8 @@ export default function Dashboard() {
       .catch(() => {});
     fetch("/api/zernio/accounts").then(r => r.json())
       .then(data => Array.isArray(data) && setZernioAccounts(data)).catch(() => {});
+    fetch("/api/subscription/status").then(r => r.ok ? r.json() : null)
+      .then(data => data && setSubStatus(data)).catch(() => {});
   }, []);
 
   async function persist(next: Video[]) { setVideos(next); }
@@ -220,6 +223,28 @@ export default function Dashboard() {
           </nav>
 
           <div className="p-4 pb-6 space-y-2">
+            {subStatus && (
+              <div className="rounded-xl p-3 mb-1" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: subStatus.plan === "pro" ? C.violetLight : C.textMuted }}>
+                    {subStatus.plan === "pro" ? "✦ Plan Pro" : "Plan Freemium"}
+                  </span>
+                </div>
+                {subStatus.plan === "free" ? (
+                  <>
+                    <div className="text-xs mb-2" style={{ color: C.textSecondary }}>
+                      {subStatus.usage.publicationsThisMonth}/{subStatus.usage.publicationsLimit} publications ce mois
+                    </div>
+                    <a href="/pricing" className="block w-full text-center py-2 rounded-lg text-xs font-semibold transition-all"
+                      style={{ background: `linear-gradient(135deg, ${C.violet}, #4F1D96)`, color: "#fff" }}>
+                      Passer au Pro
+                    </a>
+                  </>
+                ) : (
+                  <div className="text-xs" style={{ color: C.textSecondary }}>Publications illimitées</div>
+                )}
+              </div>
+            )}
             <button onClick={() => { setForm(emptyForm()); setModalMode("add"); }}
               className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all"
               style={{ background: `linear-gradient(135deg, ${C.violet}, #4F1D96)`, color: "#fff" }}>
@@ -246,6 +271,12 @@ export default function Dashboard() {
               <span className="font-bold text-sm tracking-wider" style={{ color: C.textPrimary }}>RUSHES</span>
             </div>
             <div className="flex items-center gap-2">
+              {subStatus?.plan === "free" && (
+                <a href="/pricing" className="text-xs px-2.5 py-1.5 rounded-lg font-semibold"
+                  style={{ background: C.violetBg, color: C.violetLight, border: `1px solid ${C.violet}40` }}>
+                  ✦ Pro
+                </a>
+              )}
               <button onClick={() => { setForm(emptyForm()); setModalMode("add"); }}
                 className="text-xs px-3 py-1.5 rounded-lg font-semibold"
                 style={{ background: `linear-gradient(135deg, ${C.violet}, #4F1D96)`, color: "#fff" }}>
