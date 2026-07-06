@@ -53,7 +53,7 @@ export async function zernioCreatePost(params: {
     body.publishNow = true;
   }
   if (params.mediaUrl) {
-    body.mediaUrl = params.mediaUrl;
+    body.mediaItems = [{ type: "video", url: params.mediaUrl }];
   }
 
   const res = await fetch(`${ZERNIO_BASE}/posts`, {
