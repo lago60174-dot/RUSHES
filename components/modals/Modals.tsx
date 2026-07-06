@@ -221,6 +221,7 @@ export function ZernioPublishModal({
   const [scheduledFor, setScheduledFor] = React.useState(video.scheduledDate && video.scheduledTime ? `${video.scheduledDate}T${video.scheduledTime}` : "");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
+  const [limitReached, setLimitReached] = React.useState(false);
 
   function togglePlatform(platformKey: string) {
     setSelected((prev) => {
@@ -241,14 +242,17 @@ export function ZernioPublishModal({
 
   async function handleSubmit() {
     if (targets.length === 0 || !caption.trim()) return;
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setLimitReached(false);
     try {
       const res = await fetch("/api/zernio/publish", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ videoId: video.id, caption: caption.trim(), targets, videoUrl: videoUrl.trim() || undefined, scheduledFor: scheduleMode && scheduledFor ? scheduledFor : undefined }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) {
+        if (data.limitReached) setLimitReached(true);
+        throw new Error(data.error);
+      }
       onSuccess(video.id, data.postId);
     } catch (e: unknown) { setError((e as Error).message); }
     finally { setLoading(false); }
@@ -323,7 +327,16 @@ export function ZernioPublishModal({
                 <input type="datetime-local" value={scheduledFor} onChange={(e) => setScheduledFor(e.target.value)}
                   style={{ ...inputStyle, colorScheme: "dark", fontFamily: FONT_MONO }} />
               )}
-              {error && <div className="text-xs rounded-xl p-3" style={{ color: C.coral, background: C.coralBg }}>{error}</div>}
+              {error && (
+                <div className="text-xs rounded-xl p-3" style={{ color: C.coral, background: C.coralBg }}>
+                  {error}
+                  {limitReached && (
+                    <a href="/pricing" className="block mt-2 font-semibold underline">
+                      → Passer au plan Pro pour débloquer
+                    </a>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>
