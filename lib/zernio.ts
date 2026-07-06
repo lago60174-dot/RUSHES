@@ -63,7 +63,10 @@ export async function zernioCreatePost(params: {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || `Zernio post error: ${res.status}`);
+    console.error("[zernio/posts] status:", res.status, "body sent:", JSON.stringify(body), "error response:", JSON.stringify(err));
+    throw new Error(
+      err.message || err.error || JSON.stringify(err) || `Zernio post error: ${res.status}`
+    );
   }
   const data = await res.json();
   return data.post as { _id: string; [key: string]: unknown };
