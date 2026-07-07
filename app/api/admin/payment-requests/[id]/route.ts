@@ -59,7 +59,7 @@ export async function PATCH(
 
     const { error: subErr } = await db.from("subscriptions").insert({
       user_id: req.user_id,
-      plan: "pro",
+      plan: req.plan,
       billing_period: billingPeriod,
       starts_at: new Date().toISOString(),
       ends_at: endsAt.toISOString(),
