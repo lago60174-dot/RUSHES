@@ -9,11 +9,11 @@ function zernioHeaders() {
 
 // Get connected accounts
 // Demande une URL d'upload direct (jusqu'à 5 Go) + l'URL publique finale du fichier
-export async function zernioGetMediaPresignUrl(fileName: string, fileType: string) {
+export async function zernioGetMediaPresignUrl(filename: string, contentType: string) {
   const res = await fetch(`${ZERNIO_BASE}/media/presign`, {
     method: "POST",
     headers: zernioHeaders(),
-    body: JSON.stringify({ fileName, fileType }),
+    body: JSON.stringify({ filename, contentType }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
