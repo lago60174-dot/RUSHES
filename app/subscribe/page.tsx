@@ -1,15 +1,19 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { PLANS, PAYMENT_NUMBERS, formatFCFA, getPlanAmount } from "@/lib/plans";
-import { createClient } from "@supabase/supabase-js";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { PLANS, PAYMENT_NUMBERS, formatFCFA, getPlanAmount, PLAN_BUSINESS, PLAN_PRO } from "@/lib/plans";
 
 type Period = "monthly" | "annual";
 type Method = "mtn" | "orange";
 type InputMode = "reference" | "screenshot";
+type PlanId = typeof PLAN_PRO | typeof PLAN_BUSINESS;
 
-export default function SubscribePage() {
+function SubscribeForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const plan: PlanId = searchParams.get("plan") === PLAN_BUSINESS ? PLAN_BUSINESS : PLAN_PRO;
+  const planDef = PLANS[plan];
+
   const [period, setPeriod] = useState<Period>("monthly");
   const [method, setMethod] = useState<Method>("mtn");
   const [inputMode, setInputMode] = useState<InputMode>("reference");
@@ -20,7 +24,7 @@ export default function SubscribePage() {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const amount = getPlanAmount(period);
+  const amount = getPlanAmount(period, plan);
   const paymentInfo = PAYMENT_NUMBERS[method];
 
   async function uploadProof(file: File): Promise<string> {
@@ -79,6 +83,7 @@ export default function SubscribePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          plan,
           billingPeriod: period,
           method,
           reference: inputMode === "reference" ? reference.trim() : null,
@@ -103,7 +108,7 @@ export default function SubscribePage() {
           <div className="text-6xl mb-6">✅</div>
           <h1 className="text-2xl font-bold mb-3">Demande envoyée !</h1>
           <p className="text-gray-400 mb-6">
-            Ta demande d'abonnement Pro a bien été reçue. Elle sera traitée sous 24h.
+            Ta demande d'abonnement {planDef.name} a bien été reçue. Elle sera traitée sous 24h.
             Tu recevras une confirmation une fois ton compte activé.
           </p>
           <button
@@ -121,11 +126,38 @@ export default function SubscribePage() {
     <main className="min-h-screen bg-[#0f1117] text-white px-4 py-16">
       <div className="max-w-lg mx-auto">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Passer au Pro</h1>
+          <h1 className="text-3xl font-bold mb-2">Passer au {planDef.name}</h1>
           <p className="text-gray-400">Paiement via Mobile Money — activation sous 24h.</p>
         </div>
 
         <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-6">
+          {/* Choix du plan */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-300 mb-3">
+              Plan choisi
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              {([PLAN_PRO, PLAN_BUSINESS] as PlanId[]).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => router.replace(`/subscribe?plan=${p}`)}
+                  className={`py-3 px-4 rounded-xl border text-sm font-semibold transition text-left ${
+                    plan === p
+                      ? p === PLAN_BUSINESS
+                        ? "border-cyan-500 bg-cyan-600/20 text-white"
+                        : "border-violet-500 bg-violet-600/20 text-white"
+                      : "border-white/10 text-gray-400 hover:border-white/30"
+                  }`}
+                >
+                  <div>{PLANS[p].name}</div>
+                  <div className={p === PLAN_BUSINESS ? "text-cyan-300" : "text-violet-300"}>
+                    {formatFCFA(PLANS[p].price_monthly)}/mois
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Période */}
           <div>
             <label className="block text-sm font-semibold text-gray-300 mb-3">
@@ -146,17 +178,17 @@ export default function SubscribePage() {
                     <>
                       <div>Mensuel</div>
                       <div className="text-violet-300 font-bold">
-                        {formatFCFA(PLANS.pro.price_monthly)}
+                        {formatFCFA(planDef.price_monthly)}
                       </div>
                     </>
                   ) : (
                     <>
                       <div>Annuel</div>
                       <div className="text-violet-300 font-bold">
-                        {formatFCFA(PLANS.pro.price_annual)}
+                        {formatFCFA(planDef.price_annual)}
                       </div>
                       <div className="text-xs text-green-400">
-                        Économise {formatFCFA(PLANS.pro.annual_saving)}
+                        Économise {formatFCFA(planDef.annual_saving)}
                       </div>
                     </>
                   )}
@@ -196,6 +228,9 @@ export default function SubscribePage() {
               {paymentInfo.number}
             </p>
             <p className="text-xs text-gray-400 mt-1">{paymentInfo.label}</p>
+            <p className="text-sm text-yellow-200 mt-2">
+              Nom affiché à la confirmation du code PIN : <span className="font-bold">{paymentInfo.name}</span>
+            </p>
           </div>
 
           {/* Mode de confirmation */}
@@ -281,5 +316,13 @@ export default function SubscribePage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function SubscribePage() {
+  return (
+    <Suspense fallback={null}>
+      <SubscribeForm />
+    </Suspense>
   );
 }
