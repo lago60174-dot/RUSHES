@@ -217,11 +217,44 @@ export function ZernioPublishModal({
 
   const [caption, setCaption] = React.useState([video.title, video.hashtags].filter(Boolean).join("\n\n"));
   const [videoUrl, setVideoUrl] = React.useState(video.videoUrl || "");
+  const [uploading, setUploading] = React.useState(false);
+  const [uploadProgress, setUploadProgress] = React.useState(0);
+  const [uploadError, setUploadError] = React.useState("");
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [scheduleMode, setScheduleMode] = React.useState(false);
   const [scheduledFor, setScheduledFor] = React.useState(video.scheduledDate && video.scheduledTime ? `${video.scheduledDate}T${video.scheduledTime}` : "");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
   const [limitReached, setLimitReached] = React.useState(false);
+
+  async function handleFileUpload(file: File) {
+    if (!file.type.startsWith("video/")) { setUploadError("Sélectionne un fichier vidéo."); return; }
+    setUploading(true); setUploadProgress(0); setUploadError("");
+    try {
+      const signRes = await fetch("/api/zernio/media-presign", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: file.name, fileType: file.type }),
+      });
+      const signData = await signRes.json();
+      if (!signRes.ok) throw new Error(signData.error);
+
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", signData.uploadUrl);
+        xhr.setRequestHeader("Content-Type", file.type);
+        xhr.upload.onprogress = (e) => { if (e.lengthComputable) setUploadProgress(Math.round((e.loaded / e.total) * 100)); };
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`Échec de l'upload (${xhr.status})`));
+        xhr.onerror = () => reject(new Error("Échec de l'upload — vérifie ta connexion"));
+        xhr.send(file);
+      });
+
+      setVideoUrl(signData.publicUrl);
+    } catch (e) {
+      setUploadError("Échec de l'upload : " + (e as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  }
 
   function togglePlatform(platformKey: string) {
     setSelected((prev) => {
@@ -310,13 +343,21 @@ export function ZernioPublishModal({
                   style={{ ...inputStyle, resize: "vertical" }} />
               </Field>
 
-              {/* URL vidéo */}
-              <Field label="Lien de la vidéo">
-                <input type="url" value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)}
-                  placeholder="https://drive.google.com/... ou tout lien .mp4 public" style={inputStyle} />
-                <div className="text-xs mt-1.5" style={{ color: C.textMuted }}>
-                  Le lien doit être accessible publiquement (Google Drive "Tous ceux qui ont le lien", Dropbox, OneDrive, ou lien direct .mp4).
-                </div>
+              {/* Upload vidéo (hébergé via Zernio, jusqu'à 5 Go) */}
+              <Field label="Vidéo">
+                <input ref={fileInputRef} type="file" accept="video/*" className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); }} />
+                <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                  className="w-full text-sm px-4 py-3 rounded-xl font-semibold text-left flex items-center justify-between"
+                  style={{ background: C.card, border: `1px solid ${C.border}`, color: videoUrl ? C.textPrimary : C.textMuted, opacity: uploading ? 0.6 : 1 }}>
+                  <span>{uploading ? `Upload en cours… ${uploadProgress}%` : videoUrl ? "✓ Vidéo prête — cliquer pour remplacer" : "📤 Choisir une vidéo"}</span>
+                </button>
+                {uploading && (
+                  <div className="h-1.5 rounded-full mt-2 overflow-hidden" style={{ background: C.border }}>
+                    <div className="h-full rounded-full transition-all" style={{ width: `${uploadProgress}%`, background: C.violet }} />
+                  </div>
+                )}
+                {uploadError && <div className="text-xs mt-1.5" style={{ color: C.coral }}>{uploadError}</div>}
               </Field>
 
               <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: C.textSecondary }}>
@@ -344,9 +385,9 @@ export function ZernioPublishModal({
         <div className="flex items-center justify-end gap-2 px-6 py-4" style={{ borderTop: `1px solid ${C.border}` }}>
           <button onClick={onClose} className="text-sm px-4 py-2 rounded-xl" style={{ color: C.textSecondary, border: `1px solid ${C.border}`, background: C.card }}>Annuler</button>
           {accounts.length > 0 && (
-            <button onClick={handleSubmit} disabled={loading || !caption.trim() || !videoUrl.trim() || targets.length === 0}
+            <button onClick={handleSubmit} disabled={loading || uploading || !caption.trim() || !videoUrl.trim() || targets.length === 0}
               className="text-sm px-5 py-2 rounded-xl font-semibold"
-              style={{ background: `linear-gradient(135deg, ${C.violet}, #5B21B6)`, color: "#fff", opacity: loading || !caption.trim() || !videoUrl.trim() || targets.length === 0 ? 0.6 : 1 }}>
+              style={{ background: `linear-gradient(135deg, ${C.violet}, #5B21B6)`, color: "#fff", opacity: loading || uploading || !caption.trim() || !videoUrl.trim() || targets.length === 0 ? 0.6 : 1 }}>
               {loading ? "Envoi…" : scheduleMode ? "Programmer" : `Publier sur ${targets.length || ""} réseau${targets.length > 1 ? "x" : ""}`}
             </button>
           )}
