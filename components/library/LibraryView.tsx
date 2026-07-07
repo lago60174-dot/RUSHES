@@ -169,29 +169,47 @@ function AddVideoModal({
   );
 }
 
+// ── Badge de statut ──────────────────────────────────────────────────────
+// Reflète automatiquement l'état réel de la publication : "published" est
+// posé par le webhook Zernio (ou immédiatement après une publication non
+// planifiée), donc dès que la vidéo est publiée, ce badge se met à jour
+// tout seul au prochain rafraîchissement (automatique ou manuel).
+function StatusBadge({ status }: { status: Video["status"] }) {
+  const map: Record<string, { label: string; color: string; bg: string }> = {
+    published: { label: "✓ Publié", color: C.emerald, bg: C.emerald + "18" },
+    planned: { label: "◷ Planifié", color: C.amber, bg: C.amber + "18" },
+    failed: { label: "⚠ Échec", color: C.coral, bg: C.coralBg },
+  };
+  const s = map[status] || map.planned;
+  return (
+    <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ color: s.color, background: s.bg }}>
+      {s.label}
+    </span>
+  );
+}
+
 // ── LibraryView : liste les vidéos (via /api/videos) ayant un lien renseigné ─
-export function LibraryView({ onVideoAdded }: { onVideoAdded: (videos: Video[]) => void }) {
-  const [videos, setVideos] = React.useState<Video[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState("");
+// Les vidéos viennent du Dashboard parent (source de vérité unique, partagée
+// avec le Calendrier), donc une publication faite ailleurs dans l'app —
+// ou confirmée en asynchrone par le webhook Zernio — apparaît ici
+// automatiquement, sans qu'il faille cliquer sur Rafraîchir.
+export function LibraryView({
+  videos, onRefresh, onVideoAdded,
+}: {
+  videos: Video[];
+  onRefresh: () => void;
+  onVideoAdded: (videos: Video[]) => void;
+}) {
+  const [refreshing, setRefreshing] = React.useState(false);
   const [playingId, setPlayingId] = React.useState<string | null>(null);
   const [showAddModal, setShowAddModal] = React.useState(false);
 
-  async function load() {
-    setLoading(true); setError("");
-    try {
-      const res = await fetch("/api/videos");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setVideos(Array.isArray(data) ? data.filter((v: Video) => v.videoUrl) : []);
-    } catch (e) {
-      setError((e as Error).message || "Erreur de chargement");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const libraryVideos = React.useMemo(() => videos.filter((v) => v.videoUrl), [videos]);
 
-  React.useEffect(() => { load(); }, []);
+  async function handleRefresh() {
+    setRefreshing(true);
+    try { await onRefresh(); } finally { setRefreshing(false); }
+  }
 
   function copyLink(url: string) {
     navigator.clipboard?.writeText(url);
@@ -201,7 +219,7 @@ export function LibraryView({ onVideoAdded }: { onVideoAdded: (videos: Video[]) 
     <div>
       <div className="flex items-center justify-between mb-5 flex-wrap gap-2">
         <div className="text-xs" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>
-          {loading ? "Chargement…" : `${videos.length} vidéo${videos.length > 1 ? "s" : ""}`}
+          {`${libraryVideos.length} vidéo${libraryVideos.length > 1 ? "s" : ""}`}
         </div>
         <div className="flex gap-2">
           <button onClick={() => setShowAddModal(true)}
@@ -209,20 +227,14 @@ export function LibraryView({ onVideoAdded }: { onVideoAdded: (videos: Video[]) 
             style={{ background: `linear-gradient(135deg, ${C.violet}, #4F1D96)`, color: "#fff" }}>
             + Ajouter une vidéo
           </button>
-          <button onClick={load} className="text-xs px-3 py-1.5 rounded-lg font-semibold"
-            style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
-            ↻ Rafraîchir
+          <button onClick={handleRefresh} disabled={refreshing} className="text-xs px-3 py-1.5 rounded-lg font-semibold"
+            style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}`, opacity: refreshing ? 0.6 : 1 }}>
+            {refreshing ? "Actualisation…" : "↻ Rafraîchir"}
           </button>
         </div>
       </div>
 
-      {error && (
-        <div className="rounded-xl p-4 text-sm mb-4" style={{ background: C.coralBg, color: C.coral }}>
-          {error}
-        </div>
-      )}
-
-      {!loading && videos.length === 0 && !error ? (
+      {libraryVideos.length === 0 ? (
         <div className="rounded-2xl p-8 text-center" style={{ background: C.card, border: `1px solid ${C.border}` }}>
           <div className="text-2xl mb-2">🎞</div>
           <div className="text-sm" style={{ color: C.textSecondary }}>
@@ -231,7 +243,7 @@ export function LibraryView({ onVideoAdded }: { onVideoAdded: (videos: Video[]) 
         </div>
       ) : (
         <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}>
-          {videos.map((v) => (
+          {libraryVideos.map((v) => (
             <div key={v.id} className="rounded-2xl overflow-hidden flex flex-col" style={{ background: C.card, border: `1px solid ${C.border}` }}>
               <div className="relative" style={{ background: C.bg, aspectRatio: "9/16" }}>
                 {v.videoUrl && playingId === v.id ? (
@@ -243,6 +255,9 @@ export function LibraryView({ onVideoAdded }: { onVideoAdded: (videos: Video[]) 
                     ▶
                   </button>
                 )}
+                <div className="absolute top-2 left-2">
+                  <StatusBadge status={v.status} />
+                </div>
               </div>
               <div className="p-3 flex-1 flex flex-col gap-1">
                 <div className="text-xs font-medium truncate" style={{ color: C.textPrimary }} title={v.title}>{v.title}</div>
@@ -264,7 +279,6 @@ export function LibraryView({ onVideoAdded }: { onVideoAdded: (videos: Video[]) 
         <AddVideoModal onClose={() => setShowAddModal(false)}
           onDone={(videoRecords) => {
             setShowAddModal(false);
-            load();
             onVideoAdded(videoRecords);
           }} />
       )}
