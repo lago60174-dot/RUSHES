@@ -9,12 +9,12 @@ export async function GET() {
 
   const db = createSupabaseAdminClient();
 
-  // Abonnement actif (pro non expiré)
+  // Abonnement actif (pro ou business, non expiré)
   const { data: sub } = await db
     .from("subscriptions")
     .select("*")
     .eq("user_id", user.id)
-    .eq("plan", "pro")
+    .in("plan", ["pro", "business"])
     .or("ends_at.is.null,ends_at.gt." + new Date().toISOString())
     .order("ends_at", { ascending: false, nullsFirst: true })
     .limit(1)
@@ -32,7 +32,7 @@ export async function GET() {
     .eq("status", "published")
     .gte("published_date", startOfMonth.toISOString().slice(0, 10));
 
-  const plan = sub ? "pro" : "free";
+  const plan = (sub?.plan as "pro" | "business" | undefined) || "free";
 
   return NextResponse.json({
     plan,
@@ -47,7 +47,7 @@ export async function GET() {
       : null,
     usage: {
       publicationsThisMonth: pubCount ?? 0,
-      publicationsLimit: plan === "pro" ? null : 5, // null = illimité
+      publicationsLimit: plan === "free" ? 5 : null, // null = illimité
     },
   });
 }
