@@ -2,6 +2,7 @@
 import React from "react";
 import { C, FONT_DISPLAY, FONT_MONO, PLATFORMS } from "../ui/constants";
 import { Video, ZernioAccount } from "../ui/types";
+import { useToast } from "../ui/Toast";
 
 const inputStyle: React.CSSProperties = {
   background: C.card,
@@ -194,14 +195,102 @@ export function VideoModal({
   );
 }
 
+// ── ConnectedAccountsModal ──────────────────────────────────────────────────
+// Permet à l'utilisateur connecté de lier SES PROPRES comptes sociaux via
+// Zernio, directement depuis l'app (plus besoin d'aller sur zernio.com).
+// Chaque utilisateur RUSHES a son propre profil Zernio ; ce que cette modale
+// connecte n'apparaît donc jamais chez les autres utilisateurs.
+export function ConnectedAccountsModal({
+  accounts, onClose,
+}: {
+  accounts: ZernioAccount[];
+  onClose: () => void;
+}) {
+  const toast = useToast();
+  const [connecting, setConnecting] = React.useState<string | null>(null);
+  const [error, setError] = React.useState("");
+
+  const accountsByPlatform = React.useMemo(() => {
+    const map: Record<string, ZernioAccount[]> = {};
+    for (const a of accounts) (map[a.platform] ||= []).push(a);
+    return map;
+  }, [accounts]);
+
+  async function handleConnect(platformKey: string) {
+    setConnecting(platformKey);
+    setError("");
+    try {
+      const res = await fetch(`/api/zernio/connect?platform=${platformKey}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Impossible de démarrer la connexion.");
+      window.location.href = data.authUrl;
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      toast.error("Échec de la connexion", msg);
+      setConnecting(null);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ background: "rgba(4,6,11,0.92)" }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl"
+        style={{ background: C.surfaceAlt, border: `1px solid ${C.borderLight}`, maxHeight: "90vh", overflowY: "auto" }}>
+        <div className="flex items-center justify-between p-6 pb-4">
+          <div>
+            <div className="font-semibold" style={{ color: C.textPrimary }}>Réseaux sociaux</div>
+            <div className="text-xs mt-0.5" style={{ color: C.textMuted }}>Ces comptes te sont propres — les autres utilisateurs ne les voient pas.</div>
+          </div>
+          <button onClick={onClose} className="text-xl w-8 h-8 flex items-center justify-center rounded-lg" style={{ color: C.textSecondary, background: C.card }}>✕</button>
+        </div>
+
+        <div className="px-6 pb-6 space-y-2">
+          {Object.entries(PLATFORMS).map(([key, p]) => {
+            const platformAccounts = accountsByPlatform[key] || [];
+            return (
+              <div key={key} className="rounded-xl p-3 flex items-center justify-between"
+                style={{ background: C.card, border: `1px solid ${platformAccounts.length ? p.color + "60" : C.border}` }}>
+                <div>
+                  <div className="text-sm font-semibold" style={{ color: p.color }}>{p.label}</div>
+                  {platformAccounts.length > 0 ? (
+                    <div className="text-xs mt-0.5" style={{ color: C.textSecondary }}>
+                      {platformAccounts.map(a => `@${a.username}`).join(", ")}
+                    </div>
+                  ) : (
+                    <div className="text-xs mt-0.5" style={{ color: C.textMuted }}>Non connecté</div>
+                  )}
+                </div>
+                <button onClick={() => handleConnect(key)} disabled={connecting === key}
+                  className="text-xs px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap"
+                  style={{
+                    background: platformAccounts.length ? C.card : `linear-gradient(135deg, ${C.violet}, #5B21B6)`,
+                    color: platformAccounts.length ? C.textSecondary : "#fff",
+                    border: platformAccounts.length ? `1px solid ${C.border}` : "none",
+                    opacity: connecting === key ? 0.6 : 1,
+                  }}>
+                  {connecting === key ? "Redirection…" : platformAccounts.length ? "+ Ajouter" : "Connecter"}
+                </button>
+              </div>
+            );
+          })}
+          {error && (
+            <div className="text-xs rounded-xl p-3 mt-2" style={{ color: C.coral, background: C.coralBg }}>{error}</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ZernioPublishModal({
   video, accounts, onClose, onSuccess,
 }: {
   video: Video;
   accounts: ZernioAccount[];
   onClose: () => void;
-  onSuccess: (videoId: string, postId: string) => void;
+  onSuccess: (videoId: string, postId: string, isScheduled: boolean) => void;
 }) {
+  const toast = useToast();
   // Comptes disponibles groupés par plateforme
   const accountsByPlatform = React.useMemo(() => {
     const map: Record<string, ZernioAccount[]> = {};
@@ -275,19 +364,33 @@ export function ZernioPublishModal({
 
   async function handleSubmit() {
     if (targets.length === 0 || !caption.trim()) return;
+    const isScheduled = scheduleMode && !!scheduledFor;
     setLoading(true); setError(""); setLimitReached(false);
     try {
       const res = await fetch("/api/zernio/publish", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId: video.id, caption: caption.trim(), targets, videoUrl: videoUrl.trim() || undefined, scheduledFor: scheduleMode && scheduledFor ? scheduledFor : undefined }),
+        body: JSON.stringify({ videoId: video.id, caption: caption.trim(), targets, videoUrl: videoUrl.trim() || undefined, scheduledFor: isScheduled ? scheduledFor : undefined }),
       });
       const data = await res.json();
       if (!res.ok) {
         if (data.limitReached) setLimitReached(true);
-        throw new Error(data.error);
+        throw new Error(data.error || "La publication a échoué.");
       }
-      onSuccess(video.id, data.postId);
-    } catch (e: unknown) { setError((e as Error).message); }
+      const platformNames = targets.map((t) => PLATFORMS[t.platform]?.label || t.platform).join(", ");
+      if (isScheduled) {
+        toast.success(
+          "Publication programmée ✓",
+          `Sera publiée sur ${platformNames} le ${new Date(scheduledFor).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" })}.`
+        );
+      } else {
+        toast.success("Publié avec succès ✓", `Envoyé sur ${platformNames} via Zernio.`);
+      }
+      onSuccess(video.id, data.postId, isScheduled);
+    } catch (e: unknown) {
+      const msg = (e as Error).message;
+      setError(msg);
+      toast.error("Échec de la publication", msg);
+    }
     finally { setLoading(false); }
   }
 
@@ -306,9 +409,8 @@ export function ZernioPublishModal({
         <div className="px-6 pb-6 space-y-4">
           {accounts.length === 0 ? (
             <div className="rounded-xl p-4 text-sm" style={{ background: C.card, color: C.textSecondary }}>
-              Aucun compte connecté à Zernio. Va sur{" "}
-              <a href="https://zernio.com" target="_blank" rel="noreferrer" style={{ color: C.violetLight }}>zernio.com</a>{" "}
-              pour connecter tes comptes.
+              Tu n'as encore aucun compte social connecté. Ferme cette fenêtre et clique sur{" "}
+              <span style={{ color: C.violetLight, fontWeight: 600 }}>🔗 Réseaux sociaux</span> dans le menu pour connecter les tiens.
             </div>
           ) : (
             <>
