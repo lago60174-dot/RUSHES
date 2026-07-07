@@ -228,9 +228,6 @@ function SubscribeForm() {
               {paymentInfo.number}
             </p>
             <p className="text-xs text-gray-400 mt-1">{paymentInfo.label}</p>
-            <p className="text-sm text-yellow-200 mt-2">
-              Nom affiché à la confirmation du code PIN : <span className="font-bold">{paymentInfo.name}</span>
-            </p>
           </div>
 
           {/* Mode de confirmation */}
