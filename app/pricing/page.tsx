@@ -1,134 +1,129 @@
-"use client";
-import Link from "next/link";
-import { PLANS, formatFCFA } from "@/lib/plans";
+import { NextResponse } from "next/server";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { createSupabaseAdminClient } from "@/lib/supabase-admin";
+import { zernioCreatePost, zernioListAccounts } from "@/lib/zernio";
+import { getOrCreateZernioProfileId } from "@/lib/zernio-profile";
 
-export default function PricingPage() {
-  return (
-    <main className="min-h-screen bg-[#0f1117] text-white px-4 py-16">
-      <div className="max-w-4xl mx-auto">
-        {/* En-tête */}
-        <div className="text-center mb-14">
-          <h1 className="text-4xl font-bold mb-3">Tarifs simples et transparents</h1>
-          <p className="text-gray-400 text-lg">
-            Commence gratuitement, passe Pro quand tu es prêt.
-          </p>
-        </div>
+const FREE_PLAN_LIMIT = 5; // publications/mois
 
-        {/* Cartes plans */}
-        <div className="grid md:grid-cols-2 gap-6">
-          {/* Plan Freemium */}
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-8 flex flex-col">
-            <div className="mb-6">
-              <span className="text-xs font-semibold uppercase tracking-widest text-gray-400">
-                {PLANS.free.name}
-              </span>
-              <div className="mt-3 flex items-end gap-1">
-                <span className="text-5xl font-bold">0</span>
-                <span className="text-gray-400 mb-2">FCFA</span>
-              </div>
-              <p className="text-gray-400 text-sm mt-2">Pour commencer à publier.</p>
-            </div>
+export async function POST(request: Request) {
+  const auth = await createSupabaseServerClient();
+  const { data: { user } } = await auth.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-            <ul className="flex-1 space-y-3 mb-8">
-              {PLANS.free.features.map((f) => (
-                <li key={f} className="flex items-center gap-2 text-sm text-gray-300">
-                  <span className="text-green-400">✓</span> {f}
-                </li>
-              ))}
-              {PLANS.free.missing.map((f) => (
-                <li key={f} className="flex items-center gap-2 text-sm text-gray-500 line-through">
-                  <span>✗</span> {f}
-                </li>
-              ))}
-            </ul>
+  const db = createSupabaseAdminClient();
 
-            <Link
-              href="/login"
-              className="text-center py-3 rounded-xl border border-white/20 text-sm font-semibold hover:bg-white/10 transition"
-            >
-              Commencer gratuitement
-            </Link>
-          </div>
+  // ── Vérification du plan et des limites ───────────────────
+  const now = new Date().toISOString();
 
-          {/* Plan Pro */}
-          <div className="rounded-2xl border border-violet-500/60 bg-violet-600/10 p-8 flex flex-col relative overflow-hidden">
-            <div className="absolute top-4 right-4 bg-violet-600 text-white text-xs font-bold px-3 py-1 rounded-full">
-              POPULAIRE
-            </div>
+  const { data: activeSub } = await db
+    .from("subscriptions")
+    .select("id, plan")
+    .eq("user_id", user.id)
+    .in("plan", ["pro", "business"])
+    .or(`ends_at.is.null,ends_at.gt.${now}`)
+    .limit(1)
+    .single();
 
-            <div className="mb-6">
-              <span className="text-xs font-semibold uppercase tracking-widest text-violet-400">
-                {PLANS.pro.name}
-              </span>
-              <div className="mt-3">
-                <div className="flex items-end gap-1">
-                  <span className="text-5xl font-bold">
-                    {new Intl.NumberFormat("fr-FR").format(PLANS.pro.price_monthly)}
-                  </span>
-                  <span className="text-gray-400 mb-2">FCFA / mois</span>
-                </div>
-                <p className="text-sm text-violet-300 mt-1">
-                  ou {formatFCFA(PLANS.pro.price_annual)} / an{" "}
-                  <span className="bg-violet-600/30 text-violet-300 text-xs px-2 py-0.5 rounded-full ml-1">
-                    économise {formatFCFA(PLANS.pro.annual_saving)}
-                  </span>
-                </p>
-              </div>
-              <p className="text-gray-400 text-sm mt-2">Pour scaler ta présence sur les réseaux.</p>
-            </div>
+  // Pro et Business ont tous les deux un accès illimité — seul Freemium
+  // est bridé (5 publications/mois, 1 seul réseau à la fois).
+  const isPro = !!activeSub;
 
-            <ul className="flex-1 space-y-3 mb-8">
-              {PLANS.pro.features.map((f) => (
-                <li key={f} className="flex items-center gap-2 text-sm text-gray-200">
-                  <span className="text-violet-400">✓</span> {f}
-                </li>
-              ))}
-            </ul>
+  if (!isPro) {
+    // Compter les publications ce mois-ci
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
 
-            <Link
-              href="/subscribe"
-              className="text-center py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold transition"
-            >
-              Passer au Pro
-            </Link>
-          </div>
-        </div>
+    const { count } = await db
+      .from("videos")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .eq("status", "published")
+      .gte("published_date", startOfMonth.toISOString().slice(0, 10));
 
-        {/* FAQ paiement */}
-        <div className="mt-16 text-center">
-          <h2 className="text-xl font-semibold mb-6 text-gray-300">Comment ça marche ?</h2>
-          <div className="grid md:grid-cols-3 gap-4 text-left">
-            {[
-              {
-                step: "1",
-                title: "Choisis ton plan",
-                desc: "Mensuel ou annuel, paye via MTN Mobile Money ou Orange Money.",
-              },
-              {
-                step: "2",
-                title: "Envoie la preuve",
-                desc: "Entre ta référence de transaction ou uploade un screenshot du paiement.",
-              },
-              {
-                step: "3",
-                title: "Activation rapide",
-                desc: "Ton compte Pro est activé manuellement sous 24h après vérification.",
-              },
-            ].map((item) => (
-              <div
-                key={item.step}
-                className="rounded-xl border border-white/10 bg-white/5 p-5"
-              >
-                <div className="w-8 h-8 rounded-full bg-violet-600 flex items-center justify-center text-sm font-bold mb-3">
-                  {item.step}
-                </div>
-                <h3 className="font-semibold mb-1">{item.title}</h3>
-                <p className="text-sm text-gray-400">{item.desc}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </main>
-  );
+    if ((count ?? 0) >= FREE_PLAN_LIMIT) {
+      return NextResponse.json(
+        {
+          error: `Tu as atteint la limite de ${FREE_PLAN_LIMIT} publications/mois du plan Freemium. Passe au plan Pro pour publier sans limite.`,
+          limitReached: true,
+          upgradePath: "/pricing",
+        },
+        { status: 403 }
+      );
+    }
+  }
+
+  // ── Publication normale ────────────────────────────────────
+  const body = await request.json();
+  const { videoId, caption, videoUrl, scheduledFor } = body;
+
+  const targets: Array<{ platform: string; accountId: string }> =
+    Array.isArray(body.targets) && body.targets.length > 0
+      ? body.targets
+      : body.accountId && body.platform
+        ? [{ platform: body.platform, accountId: body.accountId }]
+        : [];
+
+  if (!videoId || !caption || targets.length === 0) {
+    return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+  }
+
+  // ── Vérification limite multi-réseaux (Freemium = 1 réseau) ─
+  if (!isPro && targets.length > 1) {
+    return NextResponse.json(
+      {
+        error: "Le plan Freemium est limité à 1 réseau social. Passe au Pro pour publier sur plusieurs réseaux simultanément.",
+        limitReached: true,
+        upgradePath: "/pricing",
+      },
+      { status: 403 }
+    );
+  }
+
+  // ── Sécurité : un utilisateur ne peut publier QUE sur ses propres
+  // comptes sociaux (ceux de son profil Zernio) — sans ça, un utilisateur
+  // malveillant pourrait contourner l'UI et publier avec un accountId
+  // appartenant à un autre utilisateur RUSHES en appelant l'API directement.
+  try {
+    const profileId = await getOrCreateZernioProfileId(user.id, user.email);
+    const ownedAccounts = await zernioListAccounts(profileId);
+    const ownedIds = new Set(ownedAccounts.map(a => a._id));
+    const forbidden = targets.filter(t => !ownedIds.has(t.accountId));
+    if (forbidden.length > 0) {
+      return NextResponse.json({ error: "Un ou plusieurs comptes cibles ne t'appartiennent pas." }, { status: 403 });
+    }
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
+
+  try {
+    const post = await zernioCreatePost({
+      content: caption,
+      platforms: targets,
+      mediaUrl: videoUrl || undefined,
+      scheduledFor: scheduledFor || undefined,
+    });
+
+    const { error } = await db
+      .from("videos")
+      .update({
+        zernio_post_id: post._id,
+        zernio_account_id: targets[0].accountId,
+        zernio_targets: targets,
+        video_url: videoUrl || null,
+        status: scheduledFor ? "planned" : "published",
+        published_date: scheduledFor ? null : new Date().toISOString().slice(0, 10),
+        published_time: scheduledFor ? null : new Date().toTimeString().slice(0, 5),
+        zernio_error: null,
+        zernio_error_category: null,
+      })
+      .eq("id", videoId)
+      .eq("user_id", user.id);
+
+    if (error) throw new Error(error.message);
+    return NextResponse.json({ postId: post._id, targets });
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
 }
