@@ -44,6 +44,7 @@ export default function Dashboard() {
   const [publishModal, setPublishModal] = useState<Video | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [subStatus, setSubStatus] = useState<{ plan: "free" | "pro"; usage: { publicationsThisMonth: number; publicationsLimit: number | null } } | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -61,6 +62,9 @@ export default function Dashboard() {
       .then(data => Array.isArray(data) && setZernioAccounts(data)).catch(() => {});
     fetch("/api/subscription/status").then(r => r.ok ? r.json() : null)
       .then(data => data && setSubStatus(data)).catch(() => {});
+    createSupabaseBrowserClient().auth.getUser().then(({ data }) => {
+      if (data.user?.user_metadata?.role === "admin") setIsAdmin(true);
+    }).catch(() => {});
   }, []);
 
   async function persist(next: Video[]) { setVideos(next); }
@@ -245,6 +249,12 @@ export default function Dashboard() {
                 )}
               </div>
             )}
+            {isAdmin && (
+              <a href="/admin" className="block w-full text-center py-2 rounded-lg text-xs font-semibold transition-all"
+                style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
+                ⚙ Dashboard Admin
+              </a>
+            )}
             <button onClick={() => { setForm(emptyForm()); setModalMode("add"); }}
               className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all"
               style={{ background: `linear-gradient(135deg, ${C.violet}, #4F1D96)`, color: "#fff" }}>
@@ -271,6 +281,13 @@ export default function Dashboard() {
               <span className="font-bold text-sm tracking-wider" style={{ color: C.textPrimary }}>RUSHES</span>
             </div>
             <div className="flex items-center gap-2">
+              {isAdmin && (
+                <a href="/admin" aria-label="Dashboard Admin"
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-sm"
+                  style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
+                  ⚙
+                </a>
+              )}
               {subStatus?.plan === "free" && (
                 <a href="/pricing" className="text-xs px-2.5 py-1.5 rounded-lg font-semibold"
                   style={{ background: C.violetBg, color: C.violetLight, border: `1px solid ${C.violet}40` }}>
