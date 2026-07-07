@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
-import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { zernioGetConnectUrl } from "@/lib/zernio";
+import { getOrCreateZernioProfileId } from "@/lib/zernio-profile";
 
 export async function GET(request: Request) {
   const auth = await createSupabaseServerClient();
@@ -12,18 +12,12 @@ export async function GET(request: Request) {
   const platform = searchParams.get("platform");
   if (!platform) return NextResponse.json({ error: "Missing platform" }, { status: 400 });
 
-  const db = createSupabaseAdminClient();
-  const { data: settings } = await db
-    .from("settings")
-    .select("data")
-    .eq("user_id", user.id)
-    .single();
-
-  const profileId = settings?.data?.zernioProfileId as string | undefined;
-  if (!profileId) return NextResponse.json({ error: "No Zernio profile set up. Create a profile first via the Zernio dashboard." }, { status: 400 });
-
   try {
-    const authUrl = await zernioGetConnectUrl(platform, profileId);
+    // Provisionne automatiquement le profil Zernio de l'utilisateur s'il
+    // n'en a pas encore — plus besoin de passer par le dashboard Zernio.
+    const profileId = await getOrCreateZernioProfileId(user.id, user.email);
+    const redirectUrl = new URL(request.url).origin + "/?zernio=connected";
+    const authUrl = await zernioGetConnectUrl(platform, profileId, redirectUrl);
     return NextResponse.json({ authUrl });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
