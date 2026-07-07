@@ -4,7 +4,7 @@ export type Video = {
   title: string;
   hashtags: string;
   notes: string;
-  status: "planned" | "published";
+  status: "planned" | "published" | "failed";
   scheduledDate?: string;
   scheduledTime?: string;
   publishedDate?: string;
@@ -22,6 +22,8 @@ export type Video = {
   zernioAccountId?: string;
   zernioTargets?: Array<{ platform: string; accountId: string }>;
   zernioSyncedAt?: string;
+  zernioError?: string | null;
+  zernioErrorCategory?: string | null;
   videoUrl?: string;
 };
 
