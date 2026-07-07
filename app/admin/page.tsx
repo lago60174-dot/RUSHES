@@ -49,6 +49,7 @@ const badge = (status: string) => {
     approved: "bg-green-400/20 text-green-300",
     rejected: "bg-red-400/20 text-red-300",
     pro: "bg-violet-400/20 text-violet-300",
+    business: "bg-cyan-400/20 text-cyan-300",
     free: "bg-gray-400/20 text-gray-400",
     monthly: "bg-blue-400/20 text-blue-300",
     annual: "bg-cyan-400/20 text-cyan-300",
@@ -79,6 +80,7 @@ export default function AdminPage() {
   const [adminNotes, setAdminNotes] = useState("");
   const [newSubUserId, setNewSubUserId] = useState("");
   const [newSubEndsAt, setNewSubEndsAt] = useState("");
+  const [newSubPlan, setNewSubPlan] = useState<"pro" | "business">("pro");
 
   const fetchStats = useCallback(async () => {
     const r = await fetch("/api/admin/stats");
@@ -142,6 +144,7 @@ export default function AdminPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         userId: newSubUserId.trim(),
+        plan: newSubPlan,
         billingPeriod: null,
         endsAt: newSubEndsAt || null,
       }),
@@ -358,8 +361,26 @@ export default function AdminPage() {
         {/* ── Tab : Ajouter manuellement ── */}
         {tab === "stats" && (
           <div className="max-w-md">
-            <h2 className="text-lg font-semibold mb-4">Donner un abonnement Pro manuellement</h2>
+            <h2 className="text-lg font-semibold mb-4">Donner un abonnement manuellement</h2>
             <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Plan</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {(["pro", "business"] as const).map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setNewSubPlan(p)}
+                      className={`py-2 rounded-lg text-sm font-semibold border transition capitalize ${
+                        newSubPlan === p
+                          ? "border-violet-500 bg-violet-600/20 text-white"
+                          : "border-white/10 text-gray-400 hover:border-white/30"
+                      }`}
+                    >
+                      {p === "business" ? "Business" : "Pro"}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-1">UUID de l'utilisateur *</label>
                 <input
@@ -384,7 +405,7 @@ export default function AdminPage() {
                 onClick={handleCreateSub}
                 className="w-full py-2 bg-violet-600 hover:bg-violet-500 rounded-lg text-sm font-semibold transition"
               >
-                Activer l'abonnement Pro
+                Activer l'abonnement {newSubPlan === "business" ? "Business" : "Pro"}
               </button>
             </div>
 
