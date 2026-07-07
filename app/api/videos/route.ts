@@ -24,6 +24,10 @@ function dbToVideo(row: Record<string, unknown>) {
     avgWatchTime: row.avg_watch_time,
     completionRate: row.completion_rate,
     videoUrl: row.video_url,
+    zernioPostId: row.zernio_post_id,
+    zernioTargets: row.zernio_targets,
+    zernioError: row.zernio_error,
+    zernioErrorCategory: row.zernio_error_category,
   };
 }
 
