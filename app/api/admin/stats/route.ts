@@ -19,8 +19,8 @@ export async function GET() {
   // Abonnés actifs (pro non expiré)
   const { data: activeSubs } = await db
     .from("subscriptions")
-    .select("id, user_id, billing_period, starts_at, ends_at")
-    .eq("plan", "pro")
+    .select("id, user_id, plan, billing_period, starts_at, ends_at")
+    .in("plan", ["pro", "business"])
     .or(`ends_at.is.null,ends_at.gt.${now}`);
 
   // Demandes en attente
@@ -50,6 +50,9 @@ export async function GET() {
   const annualCount = (activeSubs || []).filter(
     (s) => s.billing_period === "annual"
   ).length;
+  const businessCount = (activeSubs || []).filter(
+    (s) => s.plan === "business"
+  ).length;
 
   // Abonnements qui expirent dans les 7 prochains jours
   const in7Days = new Date();
@@ -65,6 +68,7 @@ export async function GET() {
 
   return NextResponse.json({
     activeSubscribers: (activeSubs || []).length,
+    businessSubscribers: businessCount,
     pendingRequests: (pendingRequests || []).length,
     totalRevenue,
     revenueThisMonth,
