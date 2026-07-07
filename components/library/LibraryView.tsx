@@ -6,15 +6,6 @@ import { Video } from "../ui/types";
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
-function isLikelyValidVideoUrl(url: string) {
-  try {
-    const u = new URL(url);
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 // ── AddVideoModal : ajoute une vidéo à partir d'un lien externe ────────────
 function AddVideoModal({
   onClose, onDone,
@@ -29,11 +20,44 @@ function AddVideoModal({
   const [scheduledTime, setScheduledTime] = React.useState("18:00");
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState("");
+  const [uploading, setUploading] = React.useState(false);
+  const [uploadProgress, setUploadProgress] = React.useState(0);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const inputStyle: React.CSSProperties = {
     background: C.surface, border: `1px solid ${C.border}`, color: C.textPrimary,
     outline: "none", borderRadius: 12, padding: "10px 14px", width: "100%", fontSize: "0.875rem",
   };
+
+  async function handleFileUpload(file: File) {
+    if (!file.type.startsWith("video/")) { setError("Sélectionne un fichier vidéo."); return; }
+    setUploading(true); setUploadProgress(0); setError("");
+    try {
+      const signRes = await fetch("/api/zernio/media-presign", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: file.name, fileType: file.type }),
+      });
+      const signData = await signRes.json();
+      if (!signRes.ok) throw new Error(signData.error);
+
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", signData.uploadUrl);
+        xhr.setRequestHeader("Content-Type", file.type);
+        xhr.upload.onprogress = (e) => { if (e.lengthComputable) setUploadProgress(Math.round((e.loaded / e.total) * 100)); };
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`Échec de l'upload (${xhr.status})`));
+        xhr.onerror = () => reject(new Error("Échec de l'upload — vérifie ta connexion"));
+        xhr.send(file);
+      });
+
+      setVideoUrl(signData.publicUrl);
+      if (!title.trim()) setTitle(file.name.replace(/\.[^/.]+$/, ""));
+    } catch (e) {
+      setError("Échec de l'upload : " + (e as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  }
 
   function togglePlatform(key: string) {
     setPlatforms((prev) => {
@@ -44,10 +68,6 @@ function AddVideoModal({
 
   async function handleConfirm() {
     if (!title.trim() || !videoUrl.trim()) return;
-    if (!isLikelyValidVideoUrl(videoUrl.trim())) {
-      setError("Ce lien ne semble pas valide. Utilise un lien http(s) public.");
-      return;
-    }
     setSaving(true); setError("");
     try {
       // Crée une fiche vidéo par plateforme sélectionnée
@@ -78,12 +98,19 @@ function AddVideoModal({
         </div>
         <div className="px-6 pb-6 space-y-4">
           <div>
-            <label className="block text-xs font-bold uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Lien de la vidéo</label>
-            <input value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} style={inputStyle}
-              placeholder="https://drive.google.com/... ou tout lien .mp4 public" />
-            <div className="text-xs mt-1.5" style={{ color: C.textMuted }}>
-              Héberge ta vidéo où tu veux (Google Drive, Dropbox, OneDrive…) en accès public, puis colle le lien ici. Aucune limite de taille ni de qualité.
-            </div>
+            <label className="block text-xs font-bold uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Vidéo</label>
+            <input ref={fileInputRef} type="file" accept="video/*" className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); }} />
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}
+              className="w-full text-sm px-4 py-3 rounded-xl font-semibold text-left"
+              style={{ ...inputStyle, opacity: uploading ? 0.6 : 1, color: videoUrl ? C.textPrimary : C.textMuted }}>
+              {uploading ? `Upload en cours… ${uploadProgress}%` : videoUrl ? "✓ Vidéo prête — cliquer pour remplacer" : "📤 Choisir une vidéo"}
+            </button>
+            {uploading && (
+              <div className="h-1.5 rounded-full mt-2 overflow-hidden" style={{ background: C.border }}>
+                <div className="h-full rounded-full transition-all" style={{ width: `${uploadProgress}%`, background: C.violet }} />
+              </div>
+            )}
           </div>
 
           <div>
@@ -131,7 +158,7 @@ function AddVideoModal({
         </div>
         <div className="flex items-center justify-end gap-2 px-6 py-4" style={{ borderTop: `1px solid ${C.border}` }}>
           <button onClick={onClose} className="text-sm px-4 py-2 rounded-xl" style={{ color: C.textSecondary, border: `1px solid ${C.border}`, background: C.surface }}>Annuler</button>
-          <button onClick={handleConfirm} disabled={saving || !title.trim() || !videoUrl.trim()}
+          <button onClick={handleConfirm} disabled={saving || uploading || !title.trim() || !videoUrl.trim()}
             className="text-sm px-5 py-2 rounded-xl font-semibold"
             style={{ background: `linear-gradient(135deg, ${C.violet}, #5B21B6)`, color: "#fff", opacity: saving || !title.trim() || !videoUrl.trim() ? 0.6 : 1 }}>
             {saving ? "Enregistrement…" : platforms.length > 1 ? `Ajouter à ${platforms.length} réseaux` : "Ajouter au calendrier"}
