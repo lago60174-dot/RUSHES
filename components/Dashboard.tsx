@@ -7,8 +7,9 @@ import { DashboardView } from "./dashboard/DashboardView";
 import { HistoryView } from "./history/HistoryView";
 import { AIAnalysisView } from "./ai/AIAnalysisView";
 import { LibraryView } from "./library/LibraryView";
-import { VideoModal, ZernioPublishModal } from "./modals/Modals";
+import { VideoModal, ZernioPublishModal, ConnectedAccountsModal } from "./modals/Modals";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
+import { useToast } from "./ui/Toast";
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function todayStr() { return new Date().toISOString().slice(0, 10); }
@@ -27,6 +28,7 @@ function emptyForm(): Record<string, string> {
 }
 
 export default function Dashboard() {
+  const toast = useToast();
   const [videos, setVideos] = useState<Video[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("calendar");
@@ -43,28 +45,58 @@ export default function Dashboard() {
   const [zernioAccounts, setZernioAccounts] = useState<ZernioAccount[]>([]);
   const [publishModal, setPublishModal] = useState<Video | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
-  const [subStatus, setSubStatus] = useState<{ plan: "free" | "pro"; usage: { publicationsThisMonth: number; publicationsLimit: number | null } } | null>(null);
+  const [subStatus, setSubStatus] = useState<{ plan: "free" | "pro" | "business"; usage: { publicationsThisMonth: number; publicationsLimit: number | null } } | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [accountsModalOpen, setAccountsModalOpen] = useState(false);
+
+  function refreshZernioAccounts() {
+    fetch("/api/zernio/accounts").then(r => r.json())
+      .then(data => Array.isArray(data) && setZernioAccounts(data)).catch(() => {});
+  }
+
+  // Centralise le chargement des vidéos : c'est la seule source de vérité,
+  // utilisée à la fois par le Calendrier et la Médiathèque, pour qu'un
+  // changement de statut (ex : publication confirmée par le webhook Zernio)
+  // apparaisse automatiquement partout sans qu'il faille rafraîchir la page.
+  function loadVideos(showSpinner = false) {
+    if (showSpinner) setIsLoading(true);
+    return fetch("/api/videos").then(r => r.json())
+      .then(data => setVideos(Array.isArray(data) ? data : []))
+      .catch(() => {})
+      .finally(() => { if (showSpinner) setIsLoading(false); });
+  }
 
   useEffect(() => {
-    let mounted = true;
-    fetch("/api/videos").then(r => r.json())
-      .then(data => { if (mounted) setVideos(Array.isArray(data) ? data : []); })
-      .catch(() => {}).finally(() => { if (mounted) setIsLoading(false); });
-    return () => { mounted = false; };
+    loadVideos(true);
+    // Sondage léger toutes les 15s : capte les changements de statut qui
+    // arrivent en asynchrone côté serveur (webhook Zernio post.published,
+    // post.failed, etc.) sans action de l'utilisateur.
+    const interval = setInterval(() => loadVideos(false), 15000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
     fetch("/api/analyse/cache").then(r => r.ok ? r.json() : null)
       .then(data => { if (data) { setAiAnalysis(data.result); setAiMeta({ generatedAt: data.generatedAt, videoCount: data.videoCount }); } })
       .catch(() => {});
-    fetch("/api/zernio/accounts").then(r => r.json())
-      .then(data => Array.isArray(data) && setZernioAccounts(data)).catch(() => {});
+    refreshZernioAccounts();
     fetch("/api/subscription/status").then(r => r.ok ? r.json() : null)
       .then(data => data && setSubStatus(data)).catch(() => {});
     createSupabaseBrowserClient().auth.getUser().then(({ data }) => {
       if (data.user?.user_metadata?.role === "admin") setIsAdmin(true);
     }).catch(() => {});
+  }, []);
+
+  // Après une connexion Zernio (retour d'OAuth via le paramètre
+  // ?zernio=connected), on rafraîchit la liste des comptes et on nettoie l'URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("zernio") === "connected") {
+      refreshZernioAccounts();
+      toast.success("Compte connecté ✓", "Ton réseau social est prêt à être utilisé.");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function persist(next: Video[]) { setVideos(next); }
@@ -98,29 +130,44 @@ export default function Dashboard() {
     };
 
     const isNew = modalMode === "add";
-    if (isNew) {
-      const platformList = (form.platforms || form.platform || "tiktok")
-        .split(",").map(p => p.trim()).filter(Boolean);
-      const newVideos = (platformList.length ? platformList : [form.platform]).map(platform => ({
-        id: uid(), ...record, platform,
-      })) as Video[];
-      persist([...videos, ...newVideos]);
-      await Promise.all(newVideos.map(v =>
-        fetch("/api/videos", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(v) })
-      ));
-    } else {
-      const next = videos.map(v => v.id === form.id ? { ...v, ...record } as Video : v);
-      persist(next);
-      await fetch(`/api/videos/${form.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, ...record }) });
+    try {
+      if (isNew) {
+        const platformList = (form.platforms || form.platform || "tiktok")
+          .split(",").map(p => p.trim()).filter(Boolean);
+        const newVideos = (platformList.length ? platformList : [form.platform]).map(platform => ({
+          id: uid(), ...record, platform,
+        })) as Video[];
+        persist([...videos, ...newVideos]);
+        const results = await Promise.all(newVideos.map(v =>
+          fetch("/api/videos", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(v) })
+        ));
+        const failed = results.filter(r => !r.ok);
+        if (failed.length > 0) throw new Error(`${failed.length} vidéo(s) n'ont pas pu être enregistrées.`);
+        toast.success(newVideos.length > 1 ? "Vidéos ajoutées ✓" : "Vidéo ajoutée ✓");
+      } else {
+        const next = videos.map(v => v.id === form.id ? { ...v, ...record } as Video : v);
+        persist(next);
+        const res = await fetch(`/api/videos/${form.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, ...record }) });
+        if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || "Échec de l'enregistrement."); }
+        toast.success(modalMode === "publish" ? "Marquée comme publiée ✓" : "Modifications enregistrées ✓");
+      }
+    } catch (e) {
+      toast.error("Erreur d'enregistrement", (e as Error).message);
     }
     setSaving(false);
     setModalMode(null);
     setForm(emptyForm());
   }
 
-  function handleDelete(id: string) {
+  async function handleDelete(id: string) {
     persist(videos.filter(v => v.id !== id));
-    fetch(`/api/videos/${id}`, { method: "DELETE" });
+    try {
+      const res = await fetch(`/api/videos/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("La suppression a échoué côté serveur.");
+      toast.success("Vidéo supprimée ✓");
+    } catch (e) {
+      toast.error("Erreur de suppression", (e as Error).message);
+    }
     setModalMode(null);
     setForm(emptyForm());
   }
@@ -130,7 +177,29 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/zernio/sync/${videoId}`);
       const data = await res.json();
-      if (res.ok && data.stats) setVideos(prev => prev.map(v => v.id === videoId ? { ...v, ...data.stats, zernioSyncedAt: new Date().toISOString() } : v));
+      if (!res.ok) throw new Error(data.error || "Échec de la synchronisation des stats.");
+      if (data.stats) setVideos(prev => prev.map(v => v.id === videoId ? { ...v, ...data.stats, zernioSyncedAt: new Date().toISOString() } : v));
+      toast.success("Statistiques synchronisées ✓");
+    } catch (e) {
+      toast.error("Échec de la synchronisation", (e as Error).message);
+    } finally { setSyncingId(null); }
+  }
+
+  // Interroge Zernio pour savoir si une publication programmée (ou forcée)
+  // a réellement été publiée, a échoué, ou est toujours en attente — utile
+  // en complément du webhook, ou si celui-ci n'est pas encore configuré.
+  async function checkZernioStatus(videoId: string) {
+    setSyncingId(videoId);
+    try {
+      const res = await fetch(`/api/zernio/check-status/${videoId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Impossible de vérifier le statut.");
+      setVideos(prev => prev.map(v => v.id === videoId ? { ...v, status: data.status, zernioError: data.error || null } : v));
+      if (data.status === "published") toast.success("Publication confirmée ✓", "Le post est bien en ligne sur Zernio.");
+      else if (data.status === "failed") toast.error("La publication a échoué", data.error);
+      else toast.success("Toujours en attente", "La publication est programmée mais pas encore partie.");
+    } catch (e) {
+      toast.error("Vérification impossible", (e as Error).message);
     } finally { setSyncingId(null); }
   }
 
@@ -230,8 +299,8 @@ export default function Dashboard() {
             {subStatus && (
               <div className="rounded-xl p-3 mb-1" style={{ background: C.card, border: `1px solid ${C.border}` }}>
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: subStatus.plan === "pro" ? C.violetLight : C.textMuted }}>
-                    {subStatus.plan === "pro" ? "✦ Plan Pro" : "Plan Freemium"}
+                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: subStatus.plan !== "free" ? C.violetLight : C.textMuted }}>
+                    {subStatus.plan === "business" ? "✦ Plan Business" : subStatus.plan === "pro" ? "✦ Plan Pro" : "Plan Freemium"}
                   </span>
                 </div>
                 {subStatus.plan === "free" ? (
@@ -255,6 +324,11 @@ export default function Dashboard() {
                 ⚙ Dashboard Admin
               </a>
             )}
+            <button onClick={() => setAccountsModalOpen(true)}
+              className="w-full py-2.5 rounded-xl text-sm font-medium transition-all"
+              style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
+              🔗 Réseaux sociaux
+            </button>
             <button onClick={() => { setForm(emptyForm()); setModalMode("add"); }}
               className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all"
               style={{ background: `linear-gradient(135deg, ${C.violet}, #4F1D96)`, color: "#fff" }}>
@@ -288,6 +362,11 @@ export default function Dashboard() {
                   ⚙
                 </a>
               )}
+              <button onClick={() => setAccountsModalOpen(true)} aria-label="Réseaux sociaux"
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-sm"
+                style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
+                🔗
+              </button>
               {subStatus?.plan === "free" && (
                 <a href="/pricing" className="text-xs px-2.5 py-1.5 rounded-lg font-semibold"
                   style={{ background: C.violetBg, color: C.violetLight, border: `1px solid ${C.violet}40` }}>
@@ -319,7 +398,8 @@ export default function Dashboard() {
 
               {activeTab === "calendar" && (
                 <CalendarView videos={videos} onPublish={openPublish} onEdit={openEdit}
-                  zernioAccounts={zernioAccounts} onZernioPublish={v => setPublishModal(v)} />
+                  zernioAccounts={zernioAccounts} onZernioPublish={v => setPublishModal(v)}
+                  onCheckStatus={checkZernioStatus} checkingId={syncingId} />
               )}
               {activeTab === "dashboard" && (
                 <DashboardView videos={videos} platformFilter={platformFilter}
@@ -332,7 +412,13 @@ export default function Dashboard() {
                 <AIAnalysisView videos={videos} analysis={aiAnalysis} meta={aiMeta}
                   loading={aiLoading} error={aiError} onRun={runAnalysis} />
               )}
-              {activeTab === "library" && <LibraryView onVideoAdded={vs => setVideos(prev => [...prev, ...vs])} />}
+              {activeTab === "library" && (
+                <LibraryView
+                  videos={videos}
+                  onRefresh={() => loadVideos(false)}
+                  onVideoAdded={vs => setVideos(prev => [...prev, ...vs])}
+                />
+              )}
             </div>
           </div>
         </main>
@@ -360,10 +446,17 @@ export default function Dashboard() {
       {publishModal && (
         <ZernioPublishModal video={publishModal} accounts={zernioAccounts}
           onClose={() => setPublishModal(null)}
-          onSuccess={(videoId, postId) => {
-            setVideos(prev => prev.map(v => v.id === videoId ? { ...v, zernioPostId: postId, status: "published" } : v));
+          onSuccess={(videoId, postId, isScheduled) => {
+            setVideos(prev => prev.map(v => v.id === videoId
+              ? { ...v, zernioPostId: postId, status: isScheduled ? "planned" : "published", zernioError: null }
+              : v));
             setPublishModal(null);
           }} />
+      )}
+
+      {accountsModalOpen && (
+        <ConnectedAccountsModal accounts={zernioAccounts}
+          onClose={() => { setAccountsModalOpen(false); refreshZernioAccounts(); }} />
       )}
 
       {modalMode && (
