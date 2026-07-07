@@ -28,15 +28,17 @@ const BUCKET_CONFIG = {
 };
 
 export function CalendarView({
-  videos, onPublish, onEdit, zernioAccounts, onZernioPublish,
+  videos, onPublish, onEdit, zernioAccounts, onZernioPublish, onCheckStatus, checkingId,
 }: {
   videos: Video[];
   onPublish: (v: Video) => void;
   onEdit: (v: Video) => void;
   zernioAccounts: ZernioAccount[];
   onZernioPublish: (v: Video) => void;
+  onCheckStatus?: (id: string) => void;
+  checkingId?: string | null;
 }) {
-  const planned = videos.filter((v) => v.status === "planned");
+  const planned = videos.filter((v) => v.status === "planned" || v.status === "failed");
   if (planned.length === 0) {
     return (
       <EmptyState
@@ -47,15 +49,15 @@ export function CalendarView({
     );
   }
 
-  const buckets: Record<string, Video[]> = { retard: [], aujourdhui: [], demain: [], semaine: [], plus_tard: [] };
-  planned.forEach((v) => buckets[getBucket(v)].push(v));
+  const buckets: Record<string, Video[]> = { echec: [], retard: [], aujourdhui: [], demain: [], semaine: [], plus_tard: [] };
+  planned.forEach((v) => buckets[v.status === "failed" ? "echec" : getBucket(v)].push(v));
   Object.values(buckets).forEach((arr) =>
     arr.sort((a, b) => ((a.scheduledDate || "") + (a.scheduledTime || "")).localeCompare((b.scheduledDate || "") + (b.scheduledTime || "")))
   );
 
   return (
     <div className="space-y-8">
-      {Object.entries(BUCKET_CONFIG).map(([key, cfg]) =>
+      {Object.entries({ echec: { label: "Échec de publication", color: "#F43F5E" }, ...BUCKET_CONFIG }).map(([key, cfg]) =>
         buckets[key].length > 0 ? (
           <div key={key}>
             <div className="flex items-center gap-3 mb-4">
@@ -83,6 +85,8 @@ export function CalendarView({
                   onEdit={onEdit}
                   hasZernio={zernioAccounts.some((a) => a.platform === v.platform)}
                   onZernioPublish={onZernioPublish}
+                  onCheckStatus={onCheckStatus}
+                  checking={checkingId === v.id}
                 />
               ))}
             </div>
