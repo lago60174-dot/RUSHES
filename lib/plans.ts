@@ -2,7 +2,13 @@
 
 export const PLAN_FREE = "free" as const;
 export const PLAN_PRO = "pro" as const;
-export type Plan = typeof PLAN_FREE | typeof PLAN_PRO;
+export const PLAN_BUSINESS = "business" as const;
+export type Plan = typeof PLAN_FREE | typeof PLAN_PRO | typeof PLAN_BUSINESS;
+
+// Plans payants (déblocables via demande d'abonnement) — utilisé partout où
+// on doit savoir si un utilisateur a un accès "illimité" quel que soit
+// le palier payant exact (Pro ou Business).
+export const PAID_PLANS: Plan[] = [PLAN_PRO, PLAN_BUSINESS];
 
 export const BILLING_MONTHLY = "monthly" as const;
 export const BILLING_ANNUAL = "annual" as const;
@@ -18,6 +24,7 @@ export const PLANS = {
       social_accounts: 1,
       ai_analysis: false,
       watermark: true,
+      team_seats: 1,
     },
     features: [
       "5 publications / mois",
@@ -42,6 +49,7 @@ export const PLANS = {
       social_accounts: Infinity,
       ai_analysis: true,
       watermark: false,
+      team_seats: 1,
     },
     features: [
       "Publications illimitées",
@@ -50,6 +58,27 @@ export const PLANS = {
       "Planification avancée",
       "Aucun filigrane",
       "Support prioritaire",
+    ],
+  },
+  business: {
+    id: PLAN_BUSINESS,
+    name: "Business",
+    price_monthly: 15000,
+    price_annual: 150000,
+    annual_saving: 30000, // 15000 * 12 - 150000
+    limits: {
+      publications_per_month: Infinity,
+      social_accounts: Infinity,
+      ai_analysis: true,
+      watermark: false,
+      team_seats: 5,
+    },
+    features: [
+      "Tout ce qui est inclus dans Pro",
+      "Jusqu'à 5 membres d'équipe",
+      "Comptes sociaux illimités par membre",
+      "Support prioritaire dédié",
+      "Accès API et export de données",
     ],
   },
 } as const;
@@ -82,11 +111,15 @@ export interface PaymentRequest {
 
 // ── Helpers ──────────────────────────────────────────────────
 
-/** Montant en FCFA selon période */
-export function getPlanAmount(period: BillingPeriod): number {
-  return period === BILLING_ANNUAL
-    ? PLANS.pro.price_annual
-    : PLANS.pro.price_monthly;
+/** Un plan payant (Pro ou Business), par opposition à Freemium */
+export function isPaidPlan(plan: Plan | null | undefined): boolean {
+  return !!plan && (PAID_PLANS as string[]).includes(plan);
+}
+
+/** Montant en FCFA selon période et plan (Pro par défaut, pour compatibilité) */
+export function getPlanAmount(period: BillingPeriod, plan: typeof PLAN_PRO | typeof PLAN_BUSINESS = PLAN_PRO): number {
+  const p = PLANS[plan];
+  return period === BILLING_ANNUAL ? p.price_annual : p.price_monthly;
 }
 
 /** Calcule la date de fin d'abonnement à partir d'aujourd'hui */
@@ -112,7 +145,6 @@ export function formatFCFA(amount: number): string {
 
 /** Numéros de paiement */
 export const PAYMENT_NUMBERS = {
-  mtn: { number: "6XX XXX XXX", label: "MTN Mobile Money" },
-  orange: { number: "6XX XXX XXX", label: "Orange Money" },
+  mtn: { number: "+237 652 954 134", label: "MTN Mobile Money", name: "MIDRENE" },
+  orange: { number: "+237 656 106 225", label: "Orange Money", name: "NDJANAN VITAL AKANGE" },
 } as const;
-// ⚠️ Remplace les numéros ci-dessus par les tiens avant de déployer
