@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ToastProvider } from "@/components/ui/Toast";
 
 export const metadata: Metadata = {
   title: "RUSHES",
@@ -16,7 +17,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body style={{ margin: 0, background: "#07090F" }}>{children}</body>
+      <body style={{ margin: 0, background: "#07090F" }}>
+        <ToastProvider>{children}</ToastProvider>
+      </body>
     </html>
   );
 }
