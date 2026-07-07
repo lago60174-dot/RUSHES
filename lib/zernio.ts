@@ -1,4 +1,21 @@
+import { createHmac, timingSafeEqual } from "crypto";
+
 const ZERNIO_BASE = "https://zernio.com/api/v1";
+
+// Vérifie la signature HMAC-SHA256 envoyée par Zernio dans l'en-tête
+// `X-Zernio-Signature` sur chaque appel webhook, pour s'assurer que la
+// requête vient bien de Zernio (et pas d'un tiers qui devinerait l'URL).
+export function verifyZernioWebhookSignature(rawBody: string, signatureHeader: string | null): boolean {
+  const secret = process.env.ZERNIO_WEBHOOK_SECRET;
+  if (!secret || !signatureHeader) return false;
+  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
+  // Le header peut être préfixé (ex: "sha256=...") selon la config Zernio
+  const provided = signatureHeader.includes("=") ? signatureHeader.split("=").pop()! : signatureHeader;
+  const a = Buffer.from(expected, "hex");
+  const b = Buffer.from(provided, "hex");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 function zernioHeaders() {
   return {
@@ -9,11 +26,13 @@ function zernioHeaders() {
 
 // Get connected accounts
 // Demande une URL d'upload direct (jusqu'à 5 Go) + l'URL publique finale du fichier
-export async function zernioGetMediaPresignUrl(filename: string, contentType: string) {
+// ⚠️ Zernio attend bien fileName/fileType (pas filename/contentType) — vérifié
+// contre l'implémentation fonctionnelle de RUSHES-complet, à ne pas renommer.
+export async function zernioGetMediaPresignUrl(fileName: string, fileType: string) {
   const res = await fetch(`${ZERNIO_BASE}/media/presign`, {
     method: "POST",
     headers: zernioHeaders(),
-    body: JSON.stringify({ filename, contentType }),
+    body: JSON.stringify({ fileName, fileType }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -22,9 +41,14 @@ export async function zernioGetMediaPresignUrl(filename: string, contentType: st
   return res.json() as Promise<{ uploadUrl: string; publicUrl: string; expires: string }>;
 }
 
-// List all connected social accounts
-export async function zernioListAccounts() {
-  const res = await fetch(`${ZERNIO_BASE}/accounts`, {
+// List connected social accounts. Passer un profileId scope la liste au
+// profil (= à l'utilisateur RUSHES) au lieu de renvoyer tous les comptes
+// de toute l'app — indispensable pour l'isolation multi-utilisateur.
+export async function zernioListAccounts(profileId?: string) {
+  const url = profileId
+    ? `${ZERNIO_BASE}/accounts?profileId=${encodeURIComponent(profileId)}`
+    : `${ZERNIO_BASE}/accounts`;
+  const res = await fetch(url, {
     headers: zernioHeaders(),
   });
   if (!res.ok) throw new Error(`Zernio accounts error: ${res.status}`);
@@ -38,10 +62,33 @@ export async function zernioListAccounts() {
   }>;
 }
 
-// Get OAuth URL to connect a platform account
-export async function zernioGetConnectUrl(platform: string, profileId: string) {
+// Crée un profil Zernio (conteneur de comptes sociaux). Un profil par
+// utilisateur RUSHES permet d'isoler leurs comptes sociaux respectifs
+// tout en gardant une seule clé API partagée au niveau de l'app.
+export async function zernioCreateProfile(name: string, description?: string) {
+  const res = await fetch(`${ZERNIO_BASE}/profiles`, {
+    method: "POST",
+    headers: zernioHeaders(),
+    body: JSON.stringify({ name, description }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || err.message || `Zernio create profile error: ${res.status}`);
+  }
+  const data = await res.json();
+  // Selon les endpoints Zernio, l'objet créé peut être renvoyé directement
+  // ou sous une clé "profile" — on couvre les deux cas.
+  return (data.profile || data) as { _id: string; name: string };
+}
+
+// Get OAuth URL to connect a platform account, scopé à un profil précis.
+// redirectUrl (optionnel) : où Zernio renvoie l'utilisateur une fois
+// l'autorisation terminée (sinon Zernio utilise son propre écran par défaut).
+export async function zernioGetConnectUrl(platform: string, profileId: string, redirectUrl?: string) {
+  const params = new URLSearchParams({ profileId });
+  if (redirectUrl) params.set("redirect_url", redirectUrl);
   const res = await fetch(
-    `${ZERNIO_BASE}/connect/${platform}?profileId=${profileId}`,
+    `${ZERNIO_BASE}/connect/${platform}?${params.toString()}`,
     { headers: zernioHeaders() }
   );
   if (!res.ok) throw new Error(`Zernio connect error: ${res.status}`);
@@ -86,6 +133,34 @@ export async function zernioCreatePost(params: {
   }
   const data = await res.json();
   return data.post as { _id: string; [key: string]: unknown };
+}
+
+// Récupère l'état actuel d'un post (utile pour vérifier manuellement
+// si une publication programmée est bien partie, en complément — ou en
+// l'absence — des webhooks). Chaque plateforme cible a son propre statut
+// et, en cas d'échec, un message d'erreur détaillé.
+export async function zernioGetPost(postId: string) {
+  const res = await fetch(`${ZERNIO_BASE}/posts/${postId}`, {
+    headers: zernioHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || err.message || `Zernio get post error: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.post as {
+    _id: string;
+    status: "scheduled" | "published" | "failed" | "partial" | "cancelled" | string;
+    platforms: Array<{
+      platform: string;
+      accountId: string | { _id: string; username?: string };
+      status: string;
+      errorMessage?: string;
+      errorCategory?: string;
+      platformPostUrl?: string;
+    }>;
+    publishedAt?: string;
+  };
 }
 
 // Get analytics for a specific post
