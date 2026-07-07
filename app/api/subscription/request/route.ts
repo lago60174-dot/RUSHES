@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
-import { getPlanAmount, BILLING_MONTHLY, BILLING_ANNUAL } from "@/lib/plans";
+import { getPlanAmount, BILLING_MONTHLY, BILLING_ANNUAL, PLAN_PRO, PLAN_BUSINESS } from "@/lib/plans";
 
 export async function POST(request: Request) {
   const auth = await createSupabaseServerClient();
@@ -10,6 +10,7 @@ export async function POST(request: Request) {
 
   const body = await request.json();
   const { billingPeriod, method, reference, proofUrl } = body;
+  const plan = body.plan === PLAN_BUSINESS ? PLAN_BUSINESS : PLAN_PRO;
 
   // Validation
   if (!["monthly", "annual"].includes(billingPeriod)) {
@@ -42,13 +43,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const amount = getPlanAmount(billingPeriod === "annual" ? BILLING_ANNUAL : BILLING_MONTHLY);
+  const amount = getPlanAmount(billingPeriod === "annual" ? BILLING_ANNUAL : BILLING_MONTHLY, plan);
 
   const { data, error } = await db
     .from("payment_requests")
     .insert({
       user_id: user.id,
-      plan: "pro",
+      plan,
       billing_period: billingPeriod,
       amount,
       method,
