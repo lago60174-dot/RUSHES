@@ -3,22 +3,25 @@ import { C, FONT_DISPLAY, FONT_MONO, PLATFORMS } from "../ui/constants";
 import { Video, ZernioAccount } from "../ui/types";
 
 export function VideoCard({
-  video, onPublish, onEdit, hasZernio, onZernioPublish,
+  video, onPublish, onEdit, hasZernio, onZernioPublish, onCheckStatus, checking,
 }: {
   video: Video;
   onPublish: (v: Video) => void;
   onEdit: (v: Video) => void;
   hasZernio: boolean;
   onZernioPublish: (v: Video) => void;
+  onCheckStatus?: (id: string) => void;
+  checking?: boolean;
 }) {
   const p = PLATFORMS[video.platform];
+  const isFailed = video.status === "failed";
   return (
     <div
-      className="flex items-center gap-4 rounded-xl p-4 group transition-all"
+      className="flex items-center gap-4 rounded-xl p-4 group transition-all flex-wrap"
       style={{
         background: C.card,
-        border: `1px solid ${C.border}`,
-        borderLeft: `3px solid ${p.color}`,
+        border: `1px solid ${isFailed ? C.coral + "60" : C.border}`,
+        borderLeft: `3px solid ${isFailed ? C.coral : p.color}`,
       }}
     >
       {/* Time */}
@@ -38,12 +41,18 @@ export function VideoCard({
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <div className="font-medium truncate" style={{ fontFamily: FONT_DISPLAY, color: C.textPrimary }}>
+        <div className="font-medium truncate flex items-center gap-2" style={{ fontFamily: FONT_DISPLAY, color: C.textPrimary }}>
+          {isFailed && <span style={{ color: C.coral }}>⚠</span>}
           {video.title}
         </div>
         {video.hashtags && (
           <div className="text-xs mt-0.5 truncate" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>
             {video.hashtags}
+          </div>
+        )}
+        {isFailed && video.zernioError && (
+          <div className="text-xs mt-1" style={{ color: C.coral }}>
+            {video.zernioError}
           </div>
         )}
       </div>
@@ -57,13 +66,28 @@ export function VideoCard({
         >
           Modifier
         </button>
+        {hasZernio && video.zernioPostId && onCheckStatus && (
+          <button
+            onClick={() => onCheckStatus(video.id)}
+            disabled={checking}
+            className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-all"
+            style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}`, opacity: checking ? 0.6 : 1 }}
+            title="Vérifier si la publication est réellement partie sur Zernio"
+          >
+            {checking ? "Vérification…" : "⟳ Vérifier statut"}
+          </button>
+        )}
         {hasZernio && (
           <button
             onClick={() => onZernioPublish(video)}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-all"
-            style={{ background: C.cyanBg, color: C.cyan, border: `1px solid ${C.cyan}40` }}
+            style={{
+              background: isFailed ? C.coralBg : C.cyanBg,
+              color: isFailed ? C.coral : C.cyan,
+              border: `1px solid ${isFailed ? C.coral : C.cyan}40`,
+            }}
           >
-            ↑ Zernio
+            {isFailed ? "↻ Réessayer" : "↑ Zernio"}
           </button>
         )}
         <button
