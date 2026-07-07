@@ -30,7 +30,7 @@ export async function GET(request: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   // Récupérer les emails des utilisateurs via l'API admin Supabase Auth
-  const userIds = [...new Set((requests || []).map((r) => r.user_id))];
+  const userIds = [...new Set<string>((requests || []).map((r) => r.user_id))];
   const usersMap: Record<string, string> = {};
   for (const uid of userIds) {
     const { data } = await db.auth.admin.getUserById(uid);
