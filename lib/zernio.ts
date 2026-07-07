@@ -7,6 +7,21 @@ function zernioHeaders() {
   };
 }
 
+// Get connected accounts
+// Demande une URL d'upload direct (jusqu'à 5 Go) + l'URL publique finale du fichier
+export async function zernioGetMediaPresignUrl(fileName: string, fileType: string) {
+  const res = await fetch(`${ZERNIO_BASE}/media/presign`, {
+    method: "POST",
+    headers: zernioHeaders(),
+    body: JSON.stringify({ fileName, fileType }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || err.message || `Zernio presign error: ${res.status}`);
+  }
+  return res.json() as Promise<{ uploadUrl: string; publicUrl: string; expires: string }>;
+}
+
 // List all connected social accounts
 export async function zernioListAccounts() {
   const res = await fetch(`${ZERNIO_BASE}/accounts`, {
@@ -53,6 +68,8 @@ export async function zernioCreatePost(params: {
     body.publishNow = true;
   }
   if (params.mediaUrl) {
+    // Zernio attend un tableau mediaItems, pas un champ mediaUrl —
+    // RUSHES ne publie que des vidéos, donc type est toujours "video" ici.
     body.mediaItems = [{ type: "video", url: params.mediaUrl }];
   }
 
@@ -63,10 +80,9 @@ export async function zernioCreatePost(params: {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    console.error("[zernio/posts] status:", res.status, "body sent:", JSON.stringify(body), "error response:", JSON.stringify(err));
-    throw new Error(
-      err.message || err.error || JSON.stringify(err) || `Zernio post error: ${res.status}`
-    );
+    // Zernio renvoie son message dans le champ "error", pas "message"
+    console.error("[zernio/posts] body envoyé:", JSON.stringify(body), "réponse erreur:", JSON.stringify(err));
+    throw new Error(err.error || err.message || `Zernio post error: ${res.status}`);
   }
   const data = await res.json();
   return data.post as { _id: string; [key: string]: unknown };
