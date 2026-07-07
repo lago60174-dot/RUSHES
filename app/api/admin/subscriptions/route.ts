@@ -25,15 +25,15 @@ export async function GET(request: Request) {
     .order("created_at", { ascending: false });
 
   if (filter === "active") {
-    query = query.eq("plan", "pro").or(`ends_at.is.null,ends_at.gt.${now}`);
+    query = query.in("plan", ["pro", "business"]).or(`ends_at.is.null,ends_at.gt.${now}`);
   } else if (filter === "expired") {
-    query = query.eq("plan", "pro").lt("ends_at", now).not("ends_at", "is", null);
+    query = query.in("plan", ["pro", "business"]).lt("ends_at", now).not("ends_at", "is", null);
   }
 
   const { data: subs, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const userIds = [...new Set((subs || []).map((s) => s.user_id))];
+  const userIds = [...new Set<string>((subs || []).map((s) => s.user_id))];
   const usersMap: Record<string, string> = {};
   for (const uid of userIds) {
     const { data } = await db.auth.admin.getUserById(uid);
@@ -55,6 +55,7 @@ export async function POST(request: Request) {
 
   const body = await request.json();
   const { userId, billingPeriod, endsAt } = body;
+  const plan = body.plan === "business" ? "business" : "pro";
 
   if (!userId) return NextResponse.json({ error: "userId requis" }, { status: 400 });
 
@@ -63,7 +64,7 @@ export async function POST(request: Request) {
     .from("subscriptions")
     .insert({
       user_id: userId,
-      plan: "pro",
+      plan,
       billing_period: billingPeriod || null,
       starts_at: new Date().toISOString(),
       ends_at: endsAt || null,
