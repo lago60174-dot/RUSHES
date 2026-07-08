@@ -2,6 +2,17 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  // Routes serveur-à-serveur : appelées par GitHub Actions (cron) ou par
+  // Zernio (webhook), sans session Supabase — elles ont leur propre
+  // authentification par secret (CRON_SECRET / ZERNIO_WEBHOOK_SECRET) faite
+  // dans la route elle-même. Il ne faut jamais les rediriger vers /login,
+  // sinon l'appelant reçoit une page HTML au lieu de la réponse JSON.
+  if (pathname.startsWith("/api/cron") || pathname === "/api/zernio/webhook") {
+    return NextResponse.next();
+  }
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
