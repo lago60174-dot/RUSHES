@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from "crypto";
+
 const ZERNIO_BASE = "https://zernio.com/api/v1";
 
 function zernioHeaders() {
@@ -93,6 +95,54 @@ export async function zernioCreatePost(params: {
   const data = await res.json().catch(() => null);
   if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /posts).");
   return data.post as { _id: string; [key: string]: unknown };
+}
+
+// Récupère l'état actuel d'un post (utilisé par check-status en filet de
+// sécurité tant que le webhook n'est pas configuré, ou pour une vérif à la demande).
+// ⚠️ Reconstruite à partir de l'usage dans check-status/[videoId]/route.ts —
+// vérifie l'URL exacte (`/posts/:id`) et la forme de la réponse dans la doc Zernio.
+export async function zernioGetPost(postId: string) {
+  const res = await fetch(`${ZERNIO_BASE}/posts/${postId}`, {
+    headers: zernioHeaders(),
+  });
+  if (!res.ok) throw new Error(`Zernio post error: ${res.status}`);
+  const data = await res.json().catch(() => null);
+  if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /posts/:id).");
+  const post = (data.post ?? data) as Record<string, unknown>;
+  return post as {
+    _id: string;
+    status?: string;
+    publishedAt?: string;
+    platforms?: Array<{
+      platform: string;
+      accountId?: string | { _id: string };
+      status: string;
+      errorMessage?: string;
+      errorCategory?: string;
+    }>;
+  };
+}
+
+// Vérifie la signature HMAC-SHA256 envoyée par Zernio dans l'en-tête
+// x-zernio-signature, calculée sur le corps brut de la requête avec
+// ZERNIO_WEBHOOK_SECRET (même valeur que celle configurée dans le dashboard Zernio).
+// ⚠️ Reconstruite à partir de l'usage dans webhook/route.ts — le schéma exact
+// (algo, format de l'en-tête, préfixe "sha256=" ou non) est à confirmer dans
+// la doc Zernio ; adapte si leur implémentation diffère.
+export function verifyZernioWebhookSignature(rawBody: string, signature: string | null): boolean {
+  if (!signature) return false;
+  const secret = process.env.ZERNIO_WEBHOOK_SECRET;
+  if (!secret) {
+    console.error("[zernio/webhook] ZERNIO_WEBHOOK_SECRET manquant côté serveur.");
+    return false;
+  }
+  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
+  const provided = signature.startsWith("sha256=") ? signature.slice(7) : signature;
+
+  const expectedBuf = Buffer.from(expected, "utf8");
+  const providedBuf = Buffer.from(provided, "utf8");
+  if (expectedBuf.length !== providedBuf.length) return false;
+  return timingSafeEqual(expectedBuf, providedBuf);
 }
 
 // Get analytics for a specific post
