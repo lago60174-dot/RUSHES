@@ -12,6 +12,6 @@ jobs:
     steps:
       - name: Appeler /api/cron/sync-stats
         run: |
-          curl -sS -f \
+          curl -sS -f -L \
             -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
             "${{ secrets.RUSHES_APP_URL }}/api/cron/sync-stats"
