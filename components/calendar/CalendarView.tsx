@@ -55,8 +55,40 @@ export function CalendarView({
     arr.sort((a, b) => ((a.scheduledDate || "") + (a.scheduledTime || "")).localeCompare((b.scheduledDate || "") + (b.scheduledTime || "")))
   );
 
+  // Résumé : total, échéances urgentes, répartition par plateforme
+  const urgentCount = buckets.echec.length + buckets.retard.length + buckets.aujourdhui.length + buckets.demain.length;
+  const platformCounts = Object.entries(PLATFORMS)
+    .map(([key, p]) => ({ key, label: p.label, short: p.short, color: p.color, count: planned.filter((v) => v.platform === key).length }))
+    .filter((p) => p.count > 0);
+
   return (
     <div className="space-y-8">
+      {/* Résumé */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+          <div className="text-xs uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Total planifié</div>
+          <div className="text-2xl font-bold" style={{ fontFamily: FONT_MONO, color: C.violetLight }}>{planned.length}</div>
+        </div>
+        <div className="rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+          <div className="text-xs uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>À traiter sous 48h</div>
+          <div className="text-2xl font-bold" style={{ fontFamily: FONT_MONO, color: urgentCount > 0 ? C.coral : C.emerald }}>{urgentCount}</div>
+        </div>
+        <div className="rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+          <div className="text-xs uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Échecs de publication</div>
+          <div className="text-2xl font-bold" style={{ fontFamily: FONT_MONO, color: buckets.echec.length > 0 ? C.coral : C.emerald }}>{buckets.echec.length}</div>
+        </div>
+        <div className="rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+          <div className="text-xs uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Par plateforme</div>
+          <div className="flex flex-wrap gap-2">
+            {platformCounts.map((p) => (
+              <span key={p.key} className="text-xs px-1.5 py-0.5 rounded font-bold" style={{ color: p.color, background: `${p.color}15`, fontFamily: FONT_MONO }}>
+                {p.short} {p.count}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {Object.entries({ echec: { label: "Échec de publication", color: "#F43F5E" }, ...BUCKET_CONFIG }).map(([key, cfg]) =>
         buckets[key].length > 0 ? (
           <div key={key}>
