@@ -1,5 +1,5 @@
 "use client";
-import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
 import { C, FONT_DISPLAY, FONT_MONO, PLATFORMS } from "../ui/constants";
 import { Video } from "../ui/types";
 import { EmptyState } from "../ui/EmptyState";
@@ -10,6 +10,14 @@ function formatNum(n: number | string) {
   if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + "M";
   if (num >= 1_000) return (num / 1_000).toFixed(1) + "k";
   return num.toLocaleString("fr-FR");
+}
+
+function formatDuration(seconds: number) {
+  const s = Math.round(Number(seconds) || 0);
+  if (!s) return "0s";
+  const m = Math.floor(s / 60);
+  const rest = s % 60;
+  return m > 0 ? `${m}m${String(rest).padStart(2, "0")}s` : `${rest}s`;
 }
 
 function StatCard({ label, value, sub, accent = C.violetLight }: { label: string; value: string; sub?: string; accent?: string }) {
@@ -77,18 +85,53 @@ export function DashboardView({
     likesSum: acc.likesSum + (v.likes || 0),
     commentsSum: acc.commentsSum + (v.comments || 0),
     sharesSum: acc.sharesSum + (v.shares || 0),
-  }), { views: 0, followers: 0, count: 0, completionSum: 0, likesSum: 0, commentsSum: 0, sharesSum: 0 });
+    savesSum: acc.savesSum + (v.saves || 0),
+    watchTimeSum: acc.watchTimeSum + (v.avgWatchTime || 0),
+    watchTimeCount: acc.watchTimeCount + (v.avgWatchTime ? 1 : 0),
+  }), {
+    views: 0, followers: 0, count: 0, completionSum: 0, likesSum: 0,
+    commentsSum: 0, sharesSum: 0, savesSum: 0, watchTimeSum: 0, watchTimeCount: 0,
+  });
 
   const avgCompletion = totals.count ? (totals.completionSum / totals.count).toFixed(1) : "0";
   const engagementRate = totals.views > 0
-    ? (((totals.likesSum + totals.commentsSum + totals.sharesSum) / totals.views) * 100).toFixed(2)
+    ? (((totals.likesSum + totals.commentsSum + totals.sharesSum + totals.savesSum) / totals.views) * 100).toFixed(2)
     : "0";
+  const avgWatchTime = totals.watchTimeCount ? totals.watchTimeSum / totals.watchTimeCount : 0;
+  const avgViewsPerVideo = totals.count ? Math.round(totals.views / totals.count) : 0;
 
-  const chartData = Object.entries(PLATFORMS).map(([key, p]) => ({
-    name: p.short,
-    vues: published.filter((v) => v.platform === key).reduce((s, v) => s + (v.views || 0), 0),
-    color: p.color,
-  }));
+  const topVideo = published.length
+    ? [...published].sort((a, b) => (b.views || 0) - (a.views || 0))[0]
+    : null;
+
+  // Répartition par plateforme (compteur de vidéos, pas juste les vues)
+  const platformCounts = Object.entries(PLATFORMS).map(([key, p]) => ({
+    key, label: p.label, color: p.color,
+    count: published.filter((v) => v.platform === key).length,
+  })).filter((p) => p.count > 0);
+
+  // Tendance des vues dans le temps (par date de publication)
+  const trendMap = new Map<string, number>();
+  [...published]
+    .filter((v) => v.publishedDate)
+    .sort((a, b) => String(a.publishedDate).localeCompare(String(b.publishedDate)))
+    .forEach((v) => {
+      const key = v.publishedDate as string;
+      trendMap.set(key, (trendMap.get(key) || 0) + (v.views || 0));
+    });
+  const trendData = Array.from(trendMap.entries()).map(([date, vues]) => ({ date, vues }));
+
+  const chartData = Object.entries(PLATFORMS).map(([key, p]) => {
+    const vids = published.filter((v) => v.platform === key);
+    return {
+      name: p.short,
+      color: p.color,
+      vues: vids.reduce((s, v) => s + (v.views || 0), 0),
+      likes: vids.reduce((s, v) => s + (v.likes || 0), 0),
+      commentaires: vids.reduce((s, v) => s + (v.comments || 0), 0),
+      partages: vids.reduce((s, v) => s + (v.shares || 0), 0),
+    };
+  });
 
   function toggleSort(key: string) {
     if (sortKey === key) setSortDir(sortDir === "asc" ? "desc" : "asc");
@@ -100,35 +143,109 @@ export function DashboardView({
       {/* Stats cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard label="Vidéos publiées" value={String(totals.count)} accent={C.violetLight} />
-        <StatCard label="Vues totales" value={formatNum(totals.views)} accent={C.cyanLight} />
+        <StatCard label="Vues totales" value={formatNum(totals.views)} sub={`${formatNum(avgViewsPerVideo)} / vidéo en moy.`} accent={C.cyanLight} />
         <StatCard label="Nouveaux abonnés" value={formatNum(totals.followers)} accent={C.emerald} />
-        <StatCard label="Complétion moy." value={`${avgCompletion}%`} sub={`Engagement ${engagementRate}%`} accent={C.amber} />
+        <StatCard label="Taux d'engagement" value={`${engagementRate}%`} sub="(likes+comm.+partages+favoris) / vues" accent={C.amber} />
+        <StatCard label="Likes totaux" value={formatNum(totals.likesSum)} accent={C.violetLight} />
+        <StatCard label="Commentaires totaux" value={formatNum(totals.commentsSum)} accent={C.cyanLight} />
+        <StatCard label="Partages totaux" value={formatNum(totals.sharesSum)} accent={C.emerald} />
+        <StatCard label="Favoris totaux" value={formatNum(totals.savesSum)} accent={C.amber} />
+        <StatCard label="Complétion moy." value={`${avgCompletion}%`} accent={C.violetLight} />
+        <StatCard label="Temps de visionnage moy." value={formatDuration(avgWatchTime)} accent={C.cyanLight} />
+        {topVideo && (
+          <div
+            className="rounded-2xl p-5 col-span-2"
+            style={{ background: C.card, border: `1px solid ${C.border}` }}
+          >
+            <div className="text-xs uppercase tracking-widest mb-3" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>
+              Vidéo la plus performante
+            </div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-xs px-1.5 py-0.5 rounded font-bold" style={{ color: PLATFORMS[topVideo.platform]?.color, background: `${PLATFORMS[topVideo.platform]?.color}15`, fontFamily: FONT_MONO }}>
+                {PLATFORMS[topVideo.platform]?.short}
+              </span>
+              <div className="truncate font-semibold" style={{ color: C.textPrimary }}>{topVideo.title}</div>
+            </div>
+            <div className="text-2xl font-bold" style={{ fontFamily: FONT_MONO, color: C.emerald }}>
+              {formatNum(topVideo.views)} <span className="text-xs font-normal" style={{ color: C.textSecondary }}>vues</span>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Chart */}
+      {/* Chart multi-métriques par plateforme */}
       <div className="rounded-2xl p-5" style={{ background: C.card, border: `1px solid ${C.border}` }}>
         <div className="flex items-center justify-between mb-5">
-          <div className="text-sm font-semibold" style={{ color: C.textPrimary }}>Vues par plateforme</div>
+          <div className="text-sm font-semibold" style={{ color: C.textPrimary }}>Vues, likes, commentaires, partages par plateforme</div>
           <div className="text-xs" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>
             {published.length} vidéos
           </div>
         </div>
-        <ResponsiveContainer width="100%" height={180}>
-          <BarChart data={chartData} barSize={40}>
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={chartData} barGap={2}>
             <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
             <XAxis dataKey="name" tick={{ fill: C.textSecondary, fontSize: 12, fontFamily: FONT_MONO }} stroke="transparent" />
             <YAxis tick={{ fill: C.textSecondary, fontSize: 11 }} stroke="transparent" tickFormatter={formatNum} />
             <Tooltip
               contentStyle={{ background: C.surfaceAlt, border: `1px solid ${C.border}`, borderRadius: 12 }}
               labelStyle={{ color: C.textSecondary, fontFamily: FONT_MONO }}
-              itemStyle={{ color: C.violetLight }}
-              formatter={(v: number) => [formatNum(v), "vues"]}
+              formatter={(v: number, name: string) => [formatNum(v), name]}
             />
-            <Bar dataKey="vues" radius={[8, 8, 0, 0]}>
-              {chartData.map((d, i) => <Cell key={i} fill={d.color} opacity={0.9} />)}
-            </Bar>
+            <Bar dataKey="vues" fill={C.violetLight} radius={[6, 6, 0, 0]} />
+            <Bar dataKey="likes" fill={C.cyanLight} radius={[6, 6, 0, 0]} />
+            <Bar dataKey="commentaires" fill={C.emerald} radius={[6, 6, 0, 0]} />
+            <Bar dataKey="partages" fill={C.amber} radius={[6, 6, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
+      </div>
+
+      {/* Tendance des vues + répartition des publications par plateforme */}
+      <div className="grid md:grid-cols-3 gap-4">
+        <div className="rounded-2xl p-5 md:col-span-2" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+          <div className="text-sm font-semibold mb-5" style={{ color: C.textPrimary }}>Tendance des vues dans le temps</div>
+          {trendData.length > 1 ? (
+            <ResponsiveContainer width="100%" height={180}>
+              <LineChart data={trendData}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                <XAxis dataKey="date" tick={{ fill: C.textSecondary, fontSize: 10, fontFamily: FONT_MONO }} stroke="transparent" />
+                <YAxis tick={{ fill: C.textSecondary, fontSize: 11 }} stroke="transparent" tickFormatter={formatNum} />
+                <Tooltip
+                  contentStyle={{ background: C.surfaceAlt, border: `1px solid ${C.border}`, borderRadius: 12 }}
+                  labelStyle={{ color: C.textSecondary, fontFamily: FONT_MONO }}
+                  formatter={(v: number) => [formatNum(v), "vues"]}
+                />
+                <Line type="monotone" dataKey="vues" stroke={C.violetLight} strokeWidth={2} dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="text-xs py-8 text-center" style={{ color: C.textMuted }}>
+              Publie au moins 2 vidéos à des dates différentes pour voir une tendance.
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-2xl p-5" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+          <div className="text-sm font-semibold mb-5" style={{ color: C.textPrimary }}>Publications par plateforme</div>
+          <div className="space-y-3">
+            {platformCounts.map((p) => (
+              <div key={p.key}>
+                <div className="flex items-center justify-between text-xs mb-1">
+                  <span className="flex items-center gap-1.5" style={{ color: C.textSecondary }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: p.color, display: "inline-block" }} />
+                    {p.label}
+                  </span>
+                  <span style={{ fontFamily: FONT_MONO, color: C.textPrimary }}>{p.count}</span>
+                </div>
+                <div className="h-1.5 rounded-full" style={{ background: C.border }}>
+                  <div
+                    className="h-1.5 rounded-full"
+                    style={{ width: `${(p.count / totals.count) * 100}%`, background: p.color }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Platform filter pills */}
