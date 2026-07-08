@@ -28,6 +28,7 @@ function dbToVideo(row: Record<string, unknown>) {
     zernioTargets: row.zernio_targets,
     zernioError: row.zernio_error,
     zernioErrorCategory: row.zernio_error_category,
+    zernioSyncedAt: row.zernio_synced_at,
   };
 }
 
