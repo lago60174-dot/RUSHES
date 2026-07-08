@@ -206,6 +206,13 @@ export function LibraryView({
 
   const libraryVideos = React.useMemo(() => videos.filter((v) => v.videoUrl), [videos]);
 
+  const statusCounts = React.useMemo(() => ({
+    published: libraryVideos.filter((v) => v.status === "published").length,
+    planned: libraryVideos.filter((v) => v.status === "planned").length,
+    failed: libraryVideos.filter((v) => v.status === "failed").length,
+    totalViews: libraryVideos.reduce((s, v) => s + (v.views || 0), 0),
+  }), [libraryVideos]);
+
   async function handleRefresh() {
     setRefreshing(true);
     try { await onRefresh(); } finally { setRefreshing(false); }
@@ -217,6 +224,27 @@ export function LibraryView({
 
   return (
     <div>
+      {libraryVideos.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+          <div className="rounded-xl p-3" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+            <div className="text-[0.65rem] uppercase tracking-widest mb-1" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Publiées</div>
+            <div className="text-lg font-bold" style={{ fontFamily: FONT_MONO, color: C.emerald }}>{statusCounts.published}</div>
+          </div>
+          <div className="rounded-xl p-3" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+            <div className="text-[0.65rem] uppercase tracking-widest mb-1" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Planifiées</div>
+            <div className="text-lg font-bold" style={{ fontFamily: FONT_MONO, color: C.amber }}>{statusCounts.planned}</div>
+          </div>
+          <div className="rounded-xl p-3" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+            <div className="text-[0.65rem] uppercase tracking-widest mb-1" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Échecs</div>
+            <div className="text-lg font-bold" style={{ fontFamily: FONT_MONO, color: statusCounts.failed > 0 ? C.coral : C.textSecondary }}>{statusCounts.failed}</div>
+          </div>
+          <div className="rounded-xl p-3" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+            <div className="text-[0.65rem] uppercase tracking-widest mb-1" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Vues cumulées</div>
+            <div className="text-lg font-bold" style={{ fontFamily: FONT_MONO, color: C.violetLight }}>{statusCounts.totalViews.toLocaleString("fr-FR")}</div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-5 flex-wrap gap-2">
         <div className="text-xs" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>
           {`${libraryVideos.length} vidéo${libraryVideos.length > 1 ? "s" : ""}`}
@@ -258,6 +286,11 @@ export function LibraryView({
                 <div className="absolute top-2 left-2">
                   <StatusBadge status={v.status} />
                 </div>
+                {v.status === "published" && (
+                  <div className="absolute top-2 right-2 text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "rgba(0,0,0,0.55)", color: C.violetLight, fontFamily: FONT_MONO }}>
+                    👁 {(v.views || 0).toLocaleString("fr-FR")}
+                  </div>
+                )}
               </div>
               <div className="p-3 flex-1 flex flex-col gap-1">
                 <div className="text-xs font-medium truncate" style={{ color: C.textPrimary }} title={v.title}>{v.title}</div>
