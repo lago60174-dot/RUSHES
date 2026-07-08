@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
-import { zernioCreatePost, zernioListAccounts } from "@/lib/zernio";
-import { getOrCreateZernioProfileId } from "@/lib/zernio-profile";
+import { zernioCreatePost } from "@/lib/zernio";
 
 const FREE_PLAN_LIMIT = 5; // publications/mois
 
@@ -79,22 +78,6 @@ export async function POST(request: Request) {
       },
       { status: 403 }
     );
-  }
-
-  // ── Sécurité : un utilisateur ne peut publier QUE sur ses propres
-  // comptes sociaux (ceux de son profil Zernio) — sans ça, un utilisateur
-  // malveillant pourrait contourner l'UI et publier avec un accountId
-  // appartenant à un autre utilisateur RUSHES en appelant l'API directement.
-  try {
-    const profileId = await getOrCreateZernioProfileId(user.id, user.email);
-    const ownedAccounts = await zernioListAccounts(profileId);
-    const ownedIds = new Set(ownedAccounts.map(a => a._id));
-    const forbidden = targets.filter(t => !ownedIds.has(t.accountId));
-    if (forbidden.length > 0) {
-      return NextResponse.json({ error: "Un ou plusieurs comptes cibles ne t'appartiennent pas." }, { status: 403 });
-    }
-  } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
 
   try {
