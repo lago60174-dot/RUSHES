@@ -196,10 +196,10 @@ export function VideoModal({
 }
 
 // ── ConnectedAccountsModal ──────────────────────────────────────────────────
-// Permet à l'utilisateur connecté de lier SES PROPRES comptes sociaux via
-// Zernio, directement depuis l'app (plus besoin d'aller sur zernio.com).
-// Chaque utilisateur RUSHES a son propre profil Zernio ; ce que cette modale
-// connecte n'apparaît donc jamais chez les autres utilisateurs.
+// Permet de lier des comptes sociaux via Zernio, directement depuis l'app
+// (plus besoin d'aller sur zernio.com). Une seule clé API Zernio pour toute
+// l'app — les comptes connectés sont partagés au niveau de l'app, pas isolés
+// par utilisateur.
 export function ConnectedAccountsModal({
   accounts, onClose,
 }: {
@@ -239,7 +239,7 @@ export function ConnectedAccountsModal({
         <div className="flex items-center justify-between p-6 pb-4">
           <div>
             <div className="font-semibold" style={{ color: C.textPrimary }}>Réseaux sociaux</div>
-            <div className="text-xs mt-0.5" style={{ color: C.textMuted }}>Ces comptes te sont propres — les autres utilisateurs ne les voient pas.</div>
+            <div className="text-xs mt-0.5" style={{ color: C.textMuted }}>Comptes connectés à l'app via Zernio.</div>
           </div>
           <button onClick={onClose} className="text-xl w-8 h-8 flex items-center justify-center rounded-lg" style={{ color: C.textSecondary, background: C.card }}>✕</button>
         </div>
