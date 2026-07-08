@@ -1,5 +1,5 @@
 "use client";
-import { C, FONT_DISPLAY, FONT_MONO, MIN_VIDEOS_FOR_ANALYSIS } from "../ui/constants";
+import { C, FONT_DISPLAY, FONT_MONO, MIN_VIDEOS_FOR_ANALYSIS, PLATFORMS } from "../ui/constants";
 import { Video, AIAnalysis, AIMeta } from "../ui/types";
 import { EmptyState } from "../ui/EmptyState";
 
@@ -61,8 +61,43 @@ export function AIAnalysisView({
   const dataChanged = meta && meta.videoCount !== published.length;
   const formattedDate = meta ? new Date(meta.generatedAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : null;
 
+  // Aperçu des données qui alimentent l'analyse
+  const totalViews = published.reduce((s, v) => s + (v.views || 0), 0);
+  const avgViews = published.length ? Math.round(totalViews / published.length) : 0;
+  const dates = published.map((v) => v.publishedDate).filter(Boolean).sort() as string[];
+  const dateRange = dates.length ? `${dates[0]} → ${dates[dates.length - 1]}` : null;
+  const platformBreakdown = Object.entries(PLATFORMS)
+    .map(([key, p]) => ({ key, short: p.short, color: p.color, count: published.filter((v) => v.platform === key).length }))
+    .filter((p) => p.count > 0);
+
   return (
     <div className="space-y-6">
+      {/* Aperçu des données analysées */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+          <div className="text-xs uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Vidéos analysées</div>
+          <div className="text-xl font-bold" style={{ fontFamily: FONT_MONO, color: C.violetLight }}>{published.length}</div>
+        </div>
+        <div className="rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+          <div className="text-xs uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Vues moy. / vidéo</div>
+          <div className="text-xl font-bold" style={{ fontFamily: FONT_MONO, color: C.cyanLight }}>{avgViews.toLocaleString("fr-FR")}</div>
+        </div>
+        <div className="rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+          <div className="text-xs uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Période couverte</div>
+          <div className="text-xs font-bold" style={{ fontFamily: FONT_MONO, color: C.emerald }}>{dateRange || "—"}</div>
+        </div>
+        <div className="rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+          <div className="text-xs uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Plateformes</div>
+          <div className="flex flex-wrap gap-1.5">
+            {platformBreakdown.map((p) => (
+              <span key={p.key} className="text-xs px-1.5 py-0.5 rounded font-bold" style={{ color: p.color, background: `${p.color}15`, fontFamily: FONT_MONO }}>
+                {p.short} {p.count}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {/* Header card */}
       <div className="rounded-2xl p-5" style={{ background: C.card, border: `1px solid ${C.border}` }}>
         <div className="flex items-center justify-between flex-wrap gap-4">
