@@ -41,9 +41,8 @@ export async function zernioGetMediaPresignUrl(fileName: string, fileType: strin
   return res.json() as Promise<{ uploadUrl: string; publicUrl: string; expires: string }>;
 }
 
-// List connected social accounts. Passer un profileId scope la liste au
-// profil (= à l'utilisateur RUSHES) au lieu de renvoyer tous les comptes
-// de toute l'app — indispensable pour l'isolation multi-utilisateur.
+// List connected social accounts (tous les comptes de l'app — pas
+// d'isolation par utilisateur, une seule clé API pour toute l'app).
 export async function zernioListAccounts(profileId?: string) {
   const url = profileId
     ? `${ZERNIO_BASE}/accounts?profileId=${encodeURIComponent(profileId)}`
@@ -62,33 +61,15 @@ export async function zernioListAccounts(profileId?: string) {
   }>;
 }
 
-// Crée un profil Zernio (conteneur de comptes sociaux). Un profil par
-// utilisateur RUSHES permet d'isoler leurs comptes sociaux respectifs
-// tout en gardant une seule clé API partagée au niveau de l'app.
-export async function zernioCreateProfile(name: string, description?: string) {
-  const res = await fetch(`${ZERNIO_BASE}/profiles`, {
-    method: "POST",
-    headers: zernioHeaders(),
-    body: JSON.stringify({ name, description }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || err.message || `Zernio create profile error: ${res.status}`);
-  }
-  const data = await res.json();
-  // Selon les endpoints Zernio, l'objet créé peut être renvoyé directement
-  // ou sous une clé "profile" — on couvre les deux cas.
-  return (data.profile || data) as { _id: string; name: string };
-}
-
-// Get OAuth URL to connect a platform account, scopé à un profil précis.
+// Get OAuth URL to connect a platform account.
 // redirectUrl (optionnel) : où Zernio renvoie l'utilisateur une fois
 // l'autorisation terminée (sinon Zernio utilise son propre écran par défaut).
-export async function zernioGetConnectUrl(platform: string, profileId: string, redirectUrl?: string) {
-  const params = new URLSearchParams({ profileId });
+export async function zernioGetConnectUrl(platform: string, redirectUrl?: string) {
+  const params = new URLSearchParams();
   if (redirectUrl) params.set("redirect_url", redirectUrl);
+  const qs = params.toString();
   const res = await fetch(
-    `${ZERNIO_BASE}/connect/${platform}?${params.toString()}`,
+    `${ZERNIO_BASE}/connect/${platform}${qs ? `?${qs}` : ""}`,
     { headers: zernioHeaders() }
   );
   if (!res.ok) throw new Error(`Zernio connect error: ${res.status}`);
