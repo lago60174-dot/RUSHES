@@ -1,0 +1,17 @@
+name: Sync Zernio stats
+
+on:
+  schedule:
+    # Toutes les 30 minutes
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Appeler /api/cron/sync-stats
+        run: |
+          curl -sS -f \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.RUSHES_APP_URL }}/api/cron/sync-stats"
