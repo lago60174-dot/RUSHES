@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { C, FONT_DISPLAY, FONT_MONO, PLATFORMS, TABS, MIN_VIDEOS_FOR_ANALYSIS } from "./ui/constants";
 import { Video, ZernioAccount, AIMeta, AIAnalysis } from "./ui/types";
 import { CalendarView } from "./calendar/CalendarView";
@@ -13,6 +13,11 @@ import { useToast } from "./ui/Toast";
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function todayStr() { return new Date().toISOString().slice(0, 10); }
+
+// Synchro auto des stats Zernio : on ne retape pas une vidéo déjà
+// synchronisée il y a moins de 5 min, et on vérifie toutes les 2 min.
+const AUTO_SYNC_INTERVAL_MS = 2 * 60 * 1000;
+const AUTO_SYNC_STALE_MS = 5 * 60 * 1000;
 
 const BOTTOM_NAV_LABELS: Record<string, string> = {
   calendar: "Calendrier", dashboard: "Stats", history: "Historique",
@@ -73,6 +78,45 @@ export default function Dashboard() {
     // post.failed, etc.) sans action de l'utilisateur.
     const interval = setInterval(() => loadVideos(false), 15000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Synchro automatique et silencieuse des stats (vues, likes, etc.) pour
+  // toutes les vidéos publiées, sans que l'utilisateur ait à cliquer sur ↻.
+  // Complète le cron GitHub Actions (toutes les 6h, actif même app fermée) :
+  // ici on rafraîchit dès que le dashboard est ouvert, toutes les 2 min,
+  // en ignorant les vidéos déjà synchronisées il y a moins de 5 min.
+  const videosRef = useRef<Video[]>([]);
+  useEffect(() => { videosRef.current = videos; }, [videos]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function autoSyncPublished() {
+      const now = Date.now();
+      const toSync = videosRef.current.filter(v =>
+        v.status === "published" &&
+        v.zernioPostId &&
+        (!v.zernioSyncedAt || now - new Date(v.zernioSyncedAt).getTime() > AUTO_SYNC_STALE_MS)
+      );
+      for (const v of toSync) {
+        if (cancelled) return;
+        try {
+          const res = await fetch(`/api/zernio/sync/${v.id}`);
+          const data = await res.json().catch(() => null);
+          if (res.ok && data?.stats && !cancelled) {
+            setVideos(prev => prev.map(p => p.id === v.id ? { ...p, ...data.stats, zernioSyncedAt: new Date().toISOString() } : p));
+          }
+        } catch {
+          // Échec silencieux : la prochaine passe (2 min après) réessaiera.
+        }
+        // Petite pause entre chaque vidéo pour ne pas saturer l'API Zernio.
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+
+    autoSyncPublished();
+    const interval = setInterval(autoSyncPublished, AUTO_SYNC_INTERVAL_MS);
+    return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
   useEffect(() => {
