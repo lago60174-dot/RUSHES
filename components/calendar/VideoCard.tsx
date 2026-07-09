@@ -82,9 +82,9 @@ export function VideoCard({
             onClick={() => onZernioPublish(video)}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-all"
             style={{
-              background: isFailed ? C.coralBg : C.cyanBg,
-              color: isFailed ? C.coral : C.cyan,
-              border: `1px solid ${isFailed ? C.coral : C.cyan}40`,
+              background: isFailed ? C.coralBg : C.orangeBg,
+              color: isFailed ? C.coral : C.orange,
+              border: `1px solid ${isFailed ? C.coral : C.orange}40`,
             }}
           >
             {isFailed ? "↻ Réessayer" : "↑ Zernio"}
@@ -93,7 +93,7 @@ export function VideoCard({
         <button
           onClick={() => onPublish(video)}
           className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-all"
-          style={{ background: C.violetBg, color: C.violetLight, border: `1px solid ${C.violet}40` }}
+          style={{ background: C.greenBg, color: C.greenLight, border: `1px solid ${C.green}40` }}
         >
           ✓ Publier
         </button>
