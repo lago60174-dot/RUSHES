@@ -4,8 +4,8 @@ import { Video, AIAnalysis, AIMeta } from "../ui/types";
 import { EmptyState } from "../ui/EmptyState";
 
 const SECTION_CONFIG = [
-  { key: "patterns",        label: "Tendances observées", icon: "📈", accent: C.cyan },
-  { key: "recommendations", label: "Recommandations",     icon: "🎯", accent: C.violetLight },
+  { key: "patterns",        label: "Tendances observées", icon: "📈", accent: C.orange },
+  { key: "recommendations", label: "Recommandations",     icon: "🎯", accent: C.greenLight },
   { key: "next_ideas",      label: "Idées à tester",      icon: "💡", accent: C.emerald },
 ];
 
@@ -76,11 +76,11 @@ export function AIAnalysisView({
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
           <div className="text-xs uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Vidéos analysées</div>
-          <div className="text-xl font-bold" style={{ fontFamily: FONT_MONO, color: C.violetLight }}>{published.length}</div>
+          <div className="text-xl font-bold" style={{ fontFamily: FONT_MONO, color: C.greenLight }}>{published.length}</div>
         </div>
         <div className="rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
           <div className="text-xs uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Vues moy. / vidéo</div>
-          <div className="text-xl font-bold" style={{ fontFamily: FONT_MONO, color: C.cyanLight }}>{avgViews.toLocaleString("fr-FR")}</div>
+          <div className="text-xl font-bold" style={{ fontFamily: FONT_MONO, color: C.orangeLight }}>{avgViews.toLocaleString("fr-FR")}</div>
         </div>
         <div className="rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
           <div className="text-xs uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Période couverte</div>
@@ -103,7 +103,7 @@ export function AIAnalysisView({
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <span className="text-xs font-bold uppercase tracking-widest" style={{ color: C.violetLight, fontFamily: FONT_MONO }}>
+              <span className="text-xs font-bold uppercase tracking-widest" style={{ color: C.greenLight, fontFamily: FONT_MONO }}>
                 ✦ Powered by Mistral AI
               </span>
             </div>
@@ -124,10 +124,10 @@ export function AIAnalysisView({
             disabled={loading}
             className="text-sm px-5 py-2.5 rounded-xl font-semibold transition-all"
             style={{
-              background: loading ? C.violetBg : `linear-gradient(135deg, ${C.violet}, #5B21B6)`,
+              background: loading ? C.greenBg : `linear-gradient(135deg, ${C.green}, #15803D)`,
               color: C.textPrimary,
               opacity: loading ? 0.7 : 1,
-              border: `1px solid ${C.violet}60`,
+              border: `1px solid ${C.green}60`,
             }}
           >
             {loading ? "Analyse en cours…" : analysis ? "✦ Relancer" : "✦ Lancer l'analyse"}
@@ -144,7 +144,7 @@ export function AIAnalysisView({
                     key={i}
                     className="w-2 h-2 rounded-full"
                     style={{
-                      background: C.violetLight,
+                      background: C.greenLight,
                       animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
                     }}
                   />
