@@ -1,13 +1,7 @@
 "use client";
 import { useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
-
-const C = {
-  bg: "#07090F", surface: "#0F1623", card: "#192338",
-  border: "#1E2D45", textPrimary: "#EEF2FF", textSecondary: "#7B8DB0",
-  textMuted: "#3D4F6E", violet: "#7C3AED", violetLight: "#A78BFA",
-  error: "#F87171", success: "#34D399",
-};
+import { C } from "@/components/ui/constants";
 
 type Mode = "login" | "signup";
 
@@ -121,7 +115,7 @@ export default function LoginPage() {
               width: 44,
               height: 44,
               borderRadius: 14,
-              background: `linear-gradient(135deg, ${C.violet}, #4F1D96)`,
+              background: `linear-gradient(135deg, ${C.green}, #15803D)`,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -153,7 +147,7 @@ export default function LoginPage() {
                 fontWeight: 600,
                 fontSize: "0.85rem",
                 transition: "all 0.15s",
-                background: mode === m ? `linear-gradient(135deg, ${C.violet}, #4F1D96)` : "transparent",
+                background: mode === m ? `linear-gradient(135deg, ${C.green}, #15803D)` : "transparent",
                 color: mode === m ? "#fff" : C.textSecondary,
               }}
             >
@@ -224,7 +218,7 @@ export default function LoginPage() {
           disabled={loading || !email.trim() || !password}
           style={{
             width: "100%",
-            background: `linear-gradient(135deg, ${C.violet}, #4F1D96)`,
+            background: `linear-gradient(135deg, ${C.green}, #15803D)`,
             color: "#fff",
             border: "none",
             borderRadius: 12,
