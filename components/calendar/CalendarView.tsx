@@ -21,8 +21,8 @@ function getBucket(video: Video) {
 
 const BUCKET_CONFIG = {
   retard:     { label: "En retard",    color: "#F43F5E" },
-  aujourdhui: { label: "Aujourd'hui",  color: "#7C3AED" },
-  demain:     { label: "Demain",       color: "#06B6D4" },
+  aujourdhui: { label: "Aujourd'hui",  color: "#22C55E" },
+  demain:     { label: "Demain",       color: "#F97316" },
   semaine:    { label: "Cette semaine", color: "#10B981" },
   plus_tard:  { label: "Plus tard",    color: "#475569" },
 };
@@ -67,7 +67,7 @@ export function CalendarView({
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
           <div className="text-xs uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Total planifié</div>
-          <div className="text-2xl font-bold" style={{ fontFamily: FONT_MONO, color: C.violetLight }}>{planned.length}</div>
+          <div className="text-2xl font-bold" style={{ fontFamily: FONT_MONO, color: C.greenLight }}>{planned.length}</div>
         </div>
         <div className="rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
           <div className="text-xs uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>À traiter sous 48h</div>
