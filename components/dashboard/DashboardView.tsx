@@ -20,7 +20,7 @@ function formatDuration(seconds: number) {
   return m > 0 ? `${m}m${String(rest).padStart(2, "0")}s` : `${rest}s`;
 }
 
-function StatCard({ label, value, sub, accent = C.violetLight }: { label: string; value: string; sub?: string; accent?: string }) {
+function StatCard({ label, value, sub, accent = C.greenLight }: { label: string; value: string; sub?: string; accent?: string }) {
   return (
     <div
       className="rounded-2xl p-5"
@@ -142,16 +142,16 @@ export function DashboardView({
     <div className="space-y-6">
       {/* Stats cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label="Vidéos publiées" value={String(totals.count)} accent={C.violetLight} />
-        <StatCard label="Vues totales" value={formatNum(totals.views)} sub={`${formatNum(avgViewsPerVideo)} / vidéo en moy.`} accent={C.cyanLight} />
+        <StatCard label="Vidéos publiées" value={String(totals.count)} accent={C.greenLight} />
+        <StatCard label="Vues totales" value={formatNum(totals.views)} sub={`${formatNum(avgViewsPerVideo)} / vidéo en moy.`} accent={C.orangeLight} />
         <StatCard label="Nouveaux abonnés" value={formatNum(totals.followers)} accent={C.emerald} />
         <StatCard label="Taux d'engagement" value={`${engagementRate}%`} sub="(likes+comm.+partages+favoris) / vues" accent={C.amber} />
-        <StatCard label="Likes totaux" value={formatNum(totals.likesSum)} accent={C.violetLight} />
-        <StatCard label="Commentaires totaux" value={formatNum(totals.commentsSum)} accent={C.cyanLight} />
+        <StatCard label="Likes totaux" value={formatNum(totals.likesSum)} accent={C.greenLight} />
+        <StatCard label="Commentaires totaux" value={formatNum(totals.commentsSum)} accent={C.orangeLight} />
         <StatCard label="Partages totaux" value={formatNum(totals.sharesSum)} accent={C.emerald} />
         <StatCard label="Favoris totaux" value={formatNum(totals.savesSum)} accent={C.amber} />
-        <StatCard label="Complétion moy." value={`${avgCompletion}%`} accent={C.violetLight} />
-        <StatCard label="Temps de visionnage moy." value={formatDuration(avgWatchTime)} accent={C.cyanLight} />
+        <StatCard label="Complétion moy." value={`${avgCompletion}%`} accent={C.greenLight} />
+        <StatCard label="Temps de visionnage moy." value={formatDuration(avgWatchTime)} accent={C.orangeLight} />
         {topVideo && (
           <div
             className="rounded-2xl p-5 col-span-2"
@@ -191,8 +191,8 @@ export function DashboardView({
               labelStyle={{ color: C.textSecondary, fontFamily: FONT_MONO }}
               formatter={(v: number, name: string) => [formatNum(v), name]}
             />
-            <Bar dataKey="vues" fill={C.violetLight} radius={[6, 6, 0, 0]} />
-            <Bar dataKey="likes" fill={C.cyanLight} radius={[6, 6, 0, 0]} />
+            <Bar dataKey="vues" fill={C.greenLight} radius={[6, 6, 0, 0]} />
+            <Bar dataKey="likes" fill={C.orangeLight} radius={[6, 6, 0, 0]} />
             <Bar dataKey="commentaires" fill={C.emerald} radius={[6, 6, 0, 0]} />
             <Bar dataKey="partages" fill={C.amber} radius={[6, 6, 0, 0]} />
           </BarChart>
@@ -214,7 +214,7 @@ export function DashboardView({
                   labelStyle={{ color: C.textSecondary, fontFamily: FONT_MONO }}
                   formatter={(v: number) => [formatNum(v), "vues"]}
                 />
-                <Line type="monotone" dataKey="vues" stroke={C.violetLight} strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="vues" stroke={C.greenLight} strokeWidth={2} dot={{ r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
           ) : (
@@ -250,7 +250,7 @@ export function DashboardView({
 
       {/* Platform filter pills */}
       <div className="flex items-center gap-2 flex-wrap">
-        {[["all", "Toutes", C.violetLight], ...Object.entries(PLATFORMS).map(([k, p]) => [k, p.label, p.color])].map(([key, label, color]) => (
+        {[["all", "Toutes", C.greenLight], ...Object.entries(PLATFORMS).map(([k, p]) => [k, p.label, p.color])].map(([key, label, color]) => (
           <button
             key={key}
             onClick={() => setPlatformFilter(key)}
@@ -279,7 +279,7 @@ export function DashboardView({
                     onClick={() => key !== "sync" && toggleSort(key)}
                     className="px-4 py-3 text-left select-none whitespace-nowrap"
                     style={{
-                      color: sortKey === key ? C.violetLight : C.textMuted,
+                      color: sortKey === key ? C.greenLight : C.textMuted,
                       fontSize: "0.7rem", fontFamily: FONT_MONO, textTransform: "uppercase", letterSpacing: "0.1em",
                       cursor: key !== "sync" ? "pointer" : "default",
                     }}
@@ -304,7 +304,7 @@ export function DashboardView({
                   </td>
                   <td className="px-4 py-3" style={{ maxWidth: 200 }}>
                     <div className="truncate" style={{ color: C.textPrimary }}>{v.title}</div>
-                    {v.zernioPostId && <span className="text-xs ml-1" style={{ color: C.cyan, fontFamily: FONT_MONO }}>Z</span>}
+                    {v.zernioPostId && <span className="text-xs ml-1" style={{ color: C.orange, fontFamily: FONT_MONO }}>Z</span>}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap" style={{ fontFamily: FONT_MONO, color: C.textSecondary, fontSize: "0.8rem" }}>{v.publishedDate}</td>
                   <td className="px-4 py-3 text-right font-bold" style={{ fontFamily: FONT_MONO, color: C.textPrimary }}>{formatNum(v.views)}</td>
@@ -320,7 +320,7 @@ export function DashboardView({
                         onClick={() => onSync(v.id)}
                         disabled={syncingId === v.id}
                         className="text-xs px-2 py-1 rounded-lg"
-                        style={{ color: C.cyan, border: `1px solid ${C.cyan}30`, opacity: syncingId === v.id ? 0.5 : 1 }}
+                        style={{ color: C.orange, border: `1px solid ${C.orange}30`, opacity: syncingId === v.id ? 0.5 : 1 }}
                       >
                         {syncingId === v.id ? "…" : "⟳"}
                       </button>
