@@ -50,8 +50,6 @@ export default function Dashboard() {
   const [zernioAccounts, setZernioAccounts] = useState<ZernioAccount[]>([]);
   const [publishModal, setPublishModal] = useState<Video | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
-  const [subStatus, setSubStatus] = useState<{ plan: "free" | "pro" | "business"; usage: { publicationsThisMonth: number; publicationsLimit: number | null } } | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
   const [accountsModalOpen, setAccountsModalOpen] = useState(false);
 
   function refreshZernioAccounts() {
@@ -124,11 +122,6 @@ export default function Dashboard() {
       .then(data => { if (data) { setAiAnalysis(data.result); setAiMeta({ generatedAt: data.generatedAt, videoCount: data.videoCount }); } })
       .catch(() => {});
     refreshZernioAccounts();
-    fetch("/api/subscription/status").then(r => r.ok ? r.json() : null)
-      .then(data => data && setSubStatus(data)).catch(() => {});
-    createSupabaseBrowserClient().auth.getUser().then(({ data }) => {
-      if (data.user?.user_metadata?.role === "admin") setIsAdmin(true);
-    }).catch(() => {});
   }, []);
 
   // Après une connexion Zernio (retour d'OAuth via le paramètre
@@ -299,7 +292,7 @@ export default function Dashboard() {
         * { box-sizing: border-box; }
         ::placeholder { color: ${C.textMuted}; }
         input[type="date"]::-webkit-calendar-picker-indicator,
-        input[type="time"]::-webkit-calendar-picker-indicator { filter: invert(0.5); }
+        input[type="time"]::-webkit-calendar-picker-indicator { cursor: pointer; }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
         textarea, select, input { font-family: inherit; }
         ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -314,7 +307,7 @@ export default function Dashboard() {
           <div className="p-6 pb-8">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-                style={{ background: `linear-gradient(135deg, ${C.violet}, #4F1D96)` }}>
+                style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)` }}>
                 <span style={{ color: "#fff", fontSize: "1rem", fontWeight: 900, fontFamily: FONT_DISPLAY }}>R</span>
               </div>
               <div>
@@ -329,9 +322,9 @@ export default function Dashboard() {
               <button key={t.key} onClick={() => setActiveTab(t.key)}
                 className="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all"
                 style={{
-                  background: activeTab === t.key ? C.violetBg : "transparent",
-                  color: activeTab === t.key ? C.violetLight : C.textSecondary,
-                  border: `1px solid ${activeTab === t.key ? C.violet + "40" : "transparent"}`,
+                  background: activeTab === t.key ? C.greenBg : "transparent",
+                  color: activeTab === t.key ? C.greenLight : C.textSecondary,
+                  border: `1px solid ${activeTab === t.key ? C.green + "40" : "transparent"}`,
                 }}>
                 <span style={{ fontSize: "1rem" }}>{t.icon}</span>
                 {t.label}
@@ -340,34 +333,6 @@ export default function Dashboard() {
           </nav>
 
           <div className="p-4 pb-6 space-y-2">
-            {subStatus && (
-              <div className="rounded-xl p-3 mb-1" style={{ background: C.card, border: `1px solid ${C.border}` }}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: subStatus.plan !== "free" ? C.violetLight : C.textMuted }}>
-                    {subStatus.plan === "business" ? "✦ Plan Business" : subStatus.plan === "pro" ? "✦ Plan Pro" : "Plan Freemium"}
-                  </span>
-                </div>
-                {subStatus.plan === "free" ? (
-                  <>
-                    <div className="text-xs mb-2" style={{ color: C.textSecondary }}>
-                      {subStatus.usage.publicationsThisMonth}/{subStatus.usage.publicationsLimit} publications ce mois
-                    </div>
-                    <a href="/pricing" className="block w-full text-center py-2 rounded-lg text-xs font-semibold transition-all"
-                      style={{ background: `linear-gradient(135deg, ${C.violet}, #4F1D96)`, color: "#fff" }}>
-                      Passer au Pro
-                    </a>
-                  </>
-                ) : (
-                  <div className="text-xs" style={{ color: C.textSecondary }}>Publications illimitées</div>
-                )}
-              </div>
-            )}
-            {isAdmin && (
-              <a href="/admin" className="block w-full text-center py-2 rounded-lg text-xs font-semibold transition-all"
-                style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
-                ⚙ Dashboard Admin
-              </a>
-            )}
             <button onClick={() => setAccountsModalOpen(true)}
               className="w-full py-2.5 rounded-xl text-sm font-medium transition-all"
               style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
@@ -375,7 +340,7 @@ export default function Dashboard() {
             </button>
             <button onClick={() => { setForm(emptyForm()); setModalMode("add"); }}
               className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all"
-              style={{ background: `linear-gradient(135deg, ${C.violet}, #4F1D96)`, color: "#fff" }}>
+              style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)`, color: "#fff" }}>
               + Ajouter une vidéo
             </button>
             <button onClick={handleLogout}
@@ -393,33 +358,20 @@ export default function Dashboard() {
             style={{ background: C.bg + "F0", backdropFilter: "blur(12px)", borderBottom: `1px solid ${C.border}` }}>
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-xl flex items-center justify-center"
-                style={{ background: `linear-gradient(135deg, ${C.violet}, #4F1D96)` }}>
+                style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)` }}>
                 <span style={{ color: "#fff", fontSize: "0.85rem", fontWeight: 900 }}>R</span>
               </div>
               <span className="font-bold text-sm tracking-wider" style={{ color: C.textPrimary }}>RUSHES</span>
             </div>
             <div className="flex items-center gap-2">
-              {isAdmin && (
-                <a href="/admin" aria-label="Dashboard Admin"
-                  className="w-8 h-8 flex items-center justify-center rounded-lg text-sm"
-                  style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
-                  ⚙
-                </a>
-              )}
               <button onClick={() => setAccountsModalOpen(true)} aria-label="Réseaux sociaux"
                 className="w-8 h-8 flex items-center justify-center rounded-lg text-sm"
                 style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
                 🔗
               </button>
-              {subStatus?.plan === "free" && (
-                <a href="/pricing" className="text-xs px-2.5 py-1.5 rounded-lg font-semibold"
-                  style={{ background: C.violetBg, color: C.violetLight, border: `1px solid ${C.violet}40` }}>
-                  ✦ Pro
-                </a>
-              )}
               <button onClick={() => { setForm(emptyForm()); setModalMode("add"); }}
                 className="text-xs px-3 py-1.5 rounded-lg font-semibold"
-                style={{ background: `linear-gradient(135deg, ${C.violet}, #4F1D96)`, color: "#fff" }}>
+                style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)`, color: "#fff" }}>
                 + Ajouter
               </button>
               <button onClick={handleLogout} aria-label="Déconnexion"
@@ -478,7 +430,7 @@ export default function Dashboard() {
         {TABS.map(t => (
           <button key={t.key} onClick={() => setActiveTab(t.key)}
             className="flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-2 px-0.5"
-            style={{ color: activeTab === t.key ? C.violetLight : C.textMuted }}>
+            style={{ color: activeTab === t.key ? C.greenLight : C.textMuted }}>
             <span style={{ fontSize: "1.15rem", lineHeight: 1 }}>{t.icon}</span>
             <span className="truncate w-full text-center" style={{ fontSize: "0.58rem", fontWeight: activeTab === t.key ? 700 : 500 }}>
               {BOTTOM_NAV_LABELS[t.key] || t.label}
