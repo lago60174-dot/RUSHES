@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RUSHES — Hors ligne</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #07090F;
+      color: #E5E7EB;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .wrap {
+      text-align: center;
+      padding: 32px;
+      max-width: 360px;
+    }
+    img { width: 72px; height: 72px; border-radius: 16px; margin-bottom: 20px; }
+    h1 { font-size: 18px; margin: 0 0 8px; }
+    p { font-size: 14px; color: #9CA3AF; line-height: 1.5; margin: 0 0 20px; }
+    button {
+      background: linear-gradient(135deg, #7C3AED, #06B6D4);
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <img src="/icon-192.png" alt="RUSHES" />
+    <h1>Pas de connexion</h1>
+    <p>RUSHES a besoin d'internet pour charger tes vidéos et publications. Vérifie ta connexion et réessaie.</p>
+    <button onclick="location.reload()">Réessayer</button>
+  </div>
+</body>
+</html>
