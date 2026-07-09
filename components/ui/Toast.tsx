@@ -16,7 +16,7 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 const KIND_STYLES: Record<ToastKind, { icon: string; color: string; bg: string }> = {
   success: { icon: "✓", color: C.emerald, bg: C.emeraldBg },
   error: { icon: "✕", color: C.coral, bg: C.coralBg },
-  info: { icon: "ℹ", color: C.cyan, bg: C.cyanBg },
+  info: { icon: "ℹ", color: C.orange, bg: C.orangeBg },
 };
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
