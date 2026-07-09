@@ -123,9 +123,9 @@ export function VideoModal({
               {[["planned", "📅 Planifiée"], ["published", "✓ Déjà publiée"]].map(([val, label]) => (
                 <button key={val} onClick={() => set("entryType", val)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all"
                   style={{
-                    background: form.entryType === val ? C.violetBg : C.card,
-                    color: form.entryType === val ? C.violetLight : C.textSecondary,
-                    border: `1px solid ${form.entryType === val ? C.violet + "60" : C.border}`,
+                    background: form.entryType === val ? C.greenBg : C.card,
+                    color: form.entryType === val ? C.greenLight : C.textSecondary,
+                    border: `1px solid ${form.entryType === val ? C.green + "60" : C.border}`,
                   }}>
                   {label}
                 </button>
@@ -136,20 +136,20 @@ export function VideoModal({
           {!isPublished ? (
             <div className="grid grid-cols-2 gap-3">
               <Field label="Date">
-                <input type="date" value={form.scheduledDate} onChange={(e) => set("scheduledDate", e.target.value)} style={{ ...inputStyle, colorScheme: "dark" }} />
+                <input type="date" value={form.scheduledDate} onChange={(e) => set("scheduledDate", e.target.value)} style={{ ...inputStyle, colorScheme: "light" }} />
               </Field>
               <Field label="Heure">
-                <input type="time" value={form.scheduledTime} onChange={(e) => set("scheduledTime", e.target.value)} style={{ ...inputStyle, colorScheme: "dark", fontFamily: FONT_MONO }} />
+                <input type="time" value={form.scheduledTime} onChange={(e) => set("scheduledTime", e.target.value)} style={{ ...inputStyle, colorScheme: "light", fontFamily: FONT_MONO }} />
               </Field>
             </div>
           ) : (
             <>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Date de publication">
-                  <input type="date" value={form.publishedDate} onChange={(e) => set("publishedDate", e.target.value)} style={{ ...inputStyle, colorScheme: "dark" }} />
+                  <input type="date" value={form.publishedDate} onChange={(e) => set("publishedDate", e.target.value)} style={{ ...inputStyle, colorScheme: "light" }} />
                 </Field>
                 <Field label="Heure (optionnel)">
-                  <input type="time" value={form.publishedTime} onChange={(e) => set("publishedTime", e.target.value)} style={{ ...inputStyle, colorScheme: "dark", fontFamily: FONT_MONO }} />
+                  <input type="time" value={form.publishedTime} onChange={(e) => set("publishedTime", e.target.value)} style={{ ...inputStyle, colorScheme: "light", fontFamily: FONT_MONO }} />
                 </Field>
               </div>
               <div className="rounded-xl p-4" style={{ background: C.card, border: `1px solid ${C.border}` }}>
@@ -185,7 +185,7 @@ export function VideoModal({
             <button onClick={onClose} className="text-sm px-4 py-2 rounded-xl" style={{ color: C.textSecondary, border: `1px solid ${C.border}`, background: C.card }}>Annuler</button>
             <button onClick={onSave} disabled={saving || !form.title?.trim()}
               className="text-sm px-5 py-2 rounded-xl font-semibold"
-              style={{ background: `linear-gradient(135deg, ${C.violet}, #5B21B6)`, color: "#fff", opacity: saving || !form.title?.trim() ? 0.6 : 1 }}>
+              style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)`, color: "#fff", opacity: saving || !form.title?.trim() ? 0.6 : 1 }}>
               {saveLabels[mode] || "Enregistrer"}
             </button>
           </div>
@@ -263,7 +263,7 @@ export function ConnectedAccountsModal({
                 <button onClick={() => handleConnect(key)} disabled={connecting === key}
                   className="text-xs px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap"
                   style={{
-                    background: platformAccounts.length ? C.card : `linear-gradient(135deg, ${C.violet}, #5B21B6)`,
+                    background: platformAccounts.length ? C.card : `linear-gradient(135deg, ${C.green}, #15803D)`,
                     color: platformAccounts.length ? C.textSecondary : "#fff",
                     border: platformAccounts.length ? `1px solid ${C.border}` : "none",
                     opacity: connecting === key ? 0.6 : 1,
@@ -314,7 +314,32 @@ export function ZernioPublishModal({
   const [scheduledFor, setScheduledFor] = React.useState(video.scheduledDate && video.scheduledTime ? `${video.scheduledDate}T${video.scheduledTime}` : "");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
-  const [limitReached, setLimitReached] = React.useState(false);
+
+  // Stats du compte TikTok sélectionné (abonnés, likes, vidéos) + estimation
+  // d'éligibilité Creator Rewards — affichées uniquement pour TikTok, seule
+  // plateforme demandée pour l'instant. Voir note dans lib/zernio.ts : le
+  // vrai statut de monétisation n'est jamais accessible via API, ceci n'est
+  // qu'une estimation basée sur le seuil public de 10 000 abonnés.
+  const [tiktokStats, setTiktokStats] = React.useState<{
+    followerCount: number; followingCount: number; likesCount: number; videoCount: number;
+  } | null>(null);
+  const [tiktokStatsLoading, setTiktokStatsLoading] = React.useState(false);
+  const [tiktokStatsError, setTiktokStatsError] = React.useState("");
+
+  const tiktokAccountId = selected.tiktok;
+  React.useEffect(() => {
+    if (!tiktokAccountId) { setTiktokStats(null); setTiktokStatsError(""); return; }
+    setTiktokStatsLoading(true);
+    setTiktokStatsError("");
+    fetch(`/api/zernio/follower-stats/${tiktokAccountId}`)
+      .then(async (r) => {
+        const data = await r.json().catch(() => null);
+        if (!r.ok || !data) throw new Error(data?.error || "Impossible de récupérer les stats.");
+        setTiktokStats(data);
+      })
+      .catch((e) => { setTiktokStats(null); setTiktokStatsError((e as Error).message); })
+      .finally(() => setTiktokStatsLoading(false));
+  }, [tiktokAccountId]);
 
   async function handleFileUpload(file: File) {
     if (!file.type.startsWith("video/")) { setUploadError("Sélectionne un fichier vidéo."); return; }
@@ -365,7 +390,7 @@ export function ZernioPublishModal({
   async function handleSubmit() {
     if (targets.length === 0 || !caption.trim()) return;
     const isScheduled = scheduleMode && !!scheduledFor;
-    setLoading(true); setError(""); setLimitReached(false);
+    setLoading(true); setError("");
     try {
       const res = await fetch("/api/zernio/publish", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -373,7 +398,6 @@ export function ZernioPublishModal({
       });
       const data = await res.json();
       if (!res.ok) {
-        if (data.limitReached) setLimitReached(true);
         throw new Error(data.error || "La publication a échoué.");
       }
       const platformNames = targets.map((t) => PLATFORMS[t.platform]?.label || t.platform).join(", ");
@@ -410,7 +434,7 @@ export function ZernioPublishModal({
           {accounts.length === 0 ? (
             <div className="rounded-xl p-4 text-sm" style={{ background: C.card, color: C.textSecondary }}>
               Tu n'as encore aucun compte social connecté. Ferme cette fenêtre et clique sur{" "}
-              <span style={{ color: C.violetLight, fontWeight: 600 }}>🔗 Réseaux sociaux</span> dans le menu pour connecter les tiens.
+              <span style={{ color: C.greenLight, fontWeight: 600 }}>🔗 Réseaux sociaux</span> dans le menu pour connecter les tiens.
             </div>
           ) : (
             <>
@@ -434,6 +458,31 @@ export function ZernioPublishModal({
                             {platformAccounts.map((a) => <option key={a._id} value={a._id}>@{a.username} · {a.name}</option>)}
                           </select>
                         )}
+                        {checked && key === "tiktok" && (
+                          <div className="mt-2 rounded-lg p-2.5" style={{ background: C.bg, border: `1px solid ${C.border}` }}>
+                            {tiktokStatsLoading ? (
+                              <div className="text-xs" style={{ color: C.textMuted }}>Chargement des stats du compte…</div>
+                            ) : tiktokStatsError ? (
+                              <div className="text-xs" style={{ color: C.coral }}>Stats indisponibles : {tiktokStatsError}</div>
+                            ) : tiktokStats ? (
+                              <>
+                                <div className="flex gap-4 text-xs">
+                                  <div><span style={{ color: C.textPrimary, fontWeight: 700 }}>{tiktokStats.followerCount.toLocaleString("fr-FR")}</span> <span style={{ color: C.textMuted }}>abonnés</span></div>
+                                  <div><span style={{ color: C.textPrimary, fontWeight: 700 }}>{tiktokStats.likesCount.toLocaleString("fr-FR")}</span> <span style={{ color: C.textMuted }}>likes cumulés</span></div>
+                                  <div><span style={{ color: C.textPrimary, fontWeight: 700 }}>{tiktokStats.videoCount.toLocaleString("fr-FR")}</span> <span style={{ color: C.textMuted }}>vidéos</span></div>
+                                </div>
+                                <div className="mt-1.5 text-xs font-semibold" style={{ color: tiktokStats.followerCount >= 10000 ? C.green : C.textMuted }}>
+                                  {tiktokStats.followerCount >= 10000
+                                    ? "✓ Seuil d'abonnés du Creator Rewards Program atteint (estimation)"
+                                    : `${(10000 - tiktokStats.followerCount).toLocaleString("fr-FR")} abonnés avant le seuil du Creator Rewards Program (estimation)`}
+                                </div>
+                                <div className="mt-1 text-xs" style={{ color: C.textMuted }}>
+                                  Estimation basée sur le seuil public (10 000 abonnés) — TikTok ne communique le statut de monétisation réel qu'en interne, dans l'app.
+                                </div>
+                              </>
+                            ) : null}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -456,28 +505,23 @@ export function ZernioPublishModal({
                 </button>
                 {uploading && (
                   <div className="h-1.5 rounded-full mt-2 overflow-hidden" style={{ background: C.border }}>
-                    <div className="h-full rounded-full transition-all" style={{ width: `${uploadProgress}%`, background: C.violet }} />
+                    <div className="h-full rounded-full transition-all" style={{ width: `${uploadProgress}%`, background: C.green }} />
                   </div>
                 )}
                 {uploadError && <div className="text-xs mt-1.5" style={{ color: C.coral }}>{uploadError}</div>}
               </Field>
 
               <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: C.textSecondary }}>
-                <input type="checkbox" checked={scheduleMode} onChange={(e) => setScheduleMode(e.target.checked)} style={{ accentColor: C.violet }} />
+                <input type="checkbox" checked={scheduleMode} onChange={(e) => setScheduleMode(e.target.checked)} style={{ accentColor: C.green }} />
                 Programmer plutôt que publier maintenant
               </label>
               {scheduleMode && (
                 <input type="datetime-local" value={scheduledFor} onChange={(e) => setScheduledFor(e.target.value)}
-                  style={{ ...inputStyle, colorScheme: "dark", fontFamily: FONT_MONO }} />
+                  style={{ ...inputStyle, colorScheme: "light", fontFamily: FONT_MONO }} />
               )}
               {error && (
                 <div className="text-xs rounded-xl p-3" style={{ color: C.coral, background: C.coralBg }}>
                   {error}
-                  {limitReached && (
-                    <a href="/pricing" className="block mt-2 font-semibold underline">
-                      → Passer au plan Pro pour débloquer
-                    </a>
-                  )}
                 </div>
               )}
             </>
@@ -489,7 +533,7 @@ export function ZernioPublishModal({
           {accounts.length > 0 && (
             <button onClick={handleSubmit} disabled={loading || uploading || !caption.trim() || !videoUrl.trim() || targets.length === 0}
               className="text-sm px-5 py-2 rounded-xl font-semibold"
-              style={{ background: `linear-gradient(135deg, ${C.violet}, #5B21B6)`, color: "#fff", opacity: loading || uploading || !caption.trim() || !videoUrl.trim() || targets.length === 0 ? 0.6 : 1 }}>
+              style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)`, color: "#fff", opacity: loading || uploading || !caption.trim() || !videoUrl.trim() || targets.length === 0 ? 0.6 : 1 }}>
               {loading ? "Envoi…" : scheduleMode ? "Programmer" : `Publier sur ${targets.length || ""} réseau${targets.length > 1 ? "x" : ""}`}
             </button>
           )}
