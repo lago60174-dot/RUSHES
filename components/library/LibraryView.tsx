@@ -108,7 +108,7 @@ function AddVideoModal({
             </button>
             {uploading && (
               <div className="h-1.5 rounded-full mt-2 overflow-hidden" style={{ background: C.border }}>
-                <div className="h-full rounded-full transition-all" style={{ width: `${uploadProgress}%`, background: C.violet }} />
+                <div className="h-full rounded-full transition-all" style={{ width: `${uploadProgress}%`, background: C.green }} />
               </div>
             )}
           </div>
@@ -146,11 +146,11 @@ function AddVideoModal({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Date planifiée</label>
-              <input type="date" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} style={{ ...inputStyle, colorScheme: "dark" }} />
+              <input type="date" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} style={{ ...inputStyle, colorScheme: "light" }} />
             </div>
             <div>
               <label className="block text-xs font-bold uppercase tracking-widest mb-2" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Heure</label>
-              <input type="time" value={scheduledTime} onChange={(e) => setScheduledTime(e.target.value)} style={{ ...inputStyle, colorScheme: "dark", fontFamily: FONT_MONO }} />
+              <input type="time" value={scheduledTime} onChange={(e) => setScheduledTime(e.target.value)} style={{ ...inputStyle, colorScheme: "light", fontFamily: FONT_MONO }} />
             </div>
           </div>
 
@@ -160,7 +160,7 @@ function AddVideoModal({
           <button onClick={onClose} className="text-sm px-4 py-2 rounded-xl" style={{ color: C.textSecondary, border: `1px solid ${C.border}`, background: C.surface }}>Annuler</button>
           <button onClick={handleConfirm} disabled={saving || uploading || !title.trim() || !videoUrl.trim()}
             className="text-sm px-5 py-2 rounded-xl font-semibold"
-            style={{ background: `linear-gradient(135deg, ${C.violet}, #5B21B6)`, color: "#fff", opacity: saving || !title.trim() || !videoUrl.trim() ? 0.6 : 1 }}>
+            style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)`, color: "#fff", opacity: saving || !title.trim() || !videoUrl.trim() ? 0.6 : 1 }}>
             {saving ? "Enregistrement…" : platforms.length > 1 ? `Ajouter à ${platforms.length} réseaux` : "Ajouter au calendrier"}
           </button>
         </div>
@@ -240,7 +240,7 @@ export function LibraryView({
           </div>
           <div className="rounded-xl p-3" style={{ background: C.card, border: `1px solid ${C.border}` }}>
             <div className="text-[0.65rem] uppercase tracking-widest mb-1" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>Vues cumulées</div>
-            <div className="text-lg font-bold" style={{ fontFamily: FONT_MONO, color: C.violetLight }}>{statusCounts.totalViews.toLocaleString("fr-FR")}</div>
+            <div className="text-lg font-bold" style={{ fontFamily: FONT_MONO, color: C.greenLight }}>{statusCounts.totalViews.toLocaleString("fr-FR")}</div>
           </div>
         </div>
       )}
@@ -252,7 +252,7 @@ export function LibraryView({
         <div className="flex gap-2">
           <button onClick={() => setShowAddModal(true)}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold"
-            style={{ background: `linear-gradient(135deg, ${C.violet}, #4F1D96)`, color: "#fff" }}>
+            style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)`, color: "#fff" }}>
             + Ajouter une vidéo
           </button>
           <button onClick={handleRefresh} disabled={refreshing} className="text-xs px-3 py-1.5 rounded-lg font-semibold"
@@ -279,7 +279,7 @@ export function LibraryView({
                 ) : (
                   <button onClick={() => setPlayingId(v.id)} disabled={!v.videoUrl}
                     className="absolute inset-0 flex items-center justify-center w-full h-full"
-                    style={{ color: C.violetLight, fontSize: "2rem", background: "rgba(124,58,237,0.08)" }}>
+                    style={{ color: C.greenLight, fontSize: "2rem", background: "rgba(124,58,237,0.08)" }}>
                     ▶
                   </button>
                 )}
@@ -287,7 +287,7 @@ export function LibraryView({
                   <StatusBadge status={v.status} />
                 </div>
                 {v.status === "published" && (
-                  <div className="absolute top-2 right-2 text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "rgba(0,0,0,0.55)", color: C.violetLight, fontFamily: FONT_MONO }}>
+                  <div className="absolute top-2 right-2 text-xs px-1.5 py-0.5 rounded-full font-bold" style={{ background: "rgba(0,0,0,0.55)", color: C.greenLight, fontFamily: FONT_MONO }}>
                     👁 {(v.views || 0).toLocaleString("fr-FR")}
                   </div>
                 )}
@@ -299,7 +299,7 @@ export function LibraryView({
               <div className="flex gap-1.5 p-3 pt-0">
                 <button onClick={() => v.videoUrl && copyLink(v.videoUrl)} disabled={!v.videoUrl}
                   className="flex-1 text-xs py-1.5 rounded-lg font-medium"
-                  style={{ background: C.violetBg, color: C.violetLight, border: `1px solid ${C.violet}40` }}>
+                  style={{ background: C.greenBg, color: C.greenLight, border: `1px solid ${C.green}40` }}>
                   Copier le lien
                 </button>
               </div>
