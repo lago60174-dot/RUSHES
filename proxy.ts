@@ -40,16 +40,11 @@ export async function proxy(request: NextRequest) {
 
   const isLoginPage = request.nextUrl.pathname === "/login";
   const isAuthCallback = request.nextUrl.pathname.startsWith("/auth");
-  const isAdminRoute = request.nextUrl.pathname.startsWith("/admin");
 
   if (!user && !isLoginPage && !isAuthCallback) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
   if (user && isLoginPage) {
-    return NextResponse.redirect(new URL("/", request.url));
-  }
-  // Protège /admin : rôle admin requis (user_metadata.role === "admin")
-  if (isAdminRoute && user?.user_metadata?.role !== "admin") {
     return NextResponse.redirect(new URL("/", request.url));
   }
 
