@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ToastProvider } from "@/components/ui/Toast";
 import { PWARegister } from "@/components/pwa/PWARegister";
+import { InstallBanner } from "@/components/pwa/InstallBanner";
 
 export const metadata: Metadata = {
   title: "RUSHES",
@@ -41,6 +42,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body style={{ margin: 0, background: "#FFFFFF" }}>
         <PWARegister />
+        <InstallBanner />
         <ToastProvider>{children}</ToastProvider>
       </body>
     </html>
