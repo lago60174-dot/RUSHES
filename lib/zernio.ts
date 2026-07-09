@@ -9,6 +9,35 @@ function zernioHeaders() {
   };
 }
 
+// Stats publiques du compte (abonnés, likes cumulés, nb de vidéos, etc.) —
+// exposées par les APIs officielles des plateformes (ex. TikTok user.info.stats).
+// ⚠️ Reconstruite d'après la doc publique Zernio (docs.zernio.com) — je n'ai
+// pas pu tester en conditions réelles avec une clé API valide. Si le nom du
+// paramètre de requête ou la forme de la réponse diffère chez toi, ajuste
+// ci-dessous (l'essentiel — l'URL /accounts/follower-stats — est confirmé).
+export async function zernioGetFollowerStats(accountId: string) {
+  const res = await fetch(`${ZERNIO_BASE}/accounts/follower-stats?accountId=${accountId}`, {
+    headers: zernioHeaders(),
+  });
+  if (!res.ok) throw new Error(`Zernio follower-stats error: ${res.status}`);
+  const data = await res.json().catch(() => null);
+  if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /accounts/follower-stats).");
+
+  // La forme exacte de la réponse (accounts[] vs objet unique, snake_case vs
+  // camelCase) n'est pas garantie à 100% par la doc publique — on gère les
+  // deux variantes les plus probables.
+  const raw = Array.isArray(data.accounts) ? data.accounts[0] : (data.stats ?? data);
+
+  return {
+    followerCount: Number(raw?.followerCount ?? raw?.follower_count ?? 0),
+    followingCount: Number(raw?.followingCount ?? raw?.following_count ?? 0),
+    likesCount: Number(raw?.likesCount ?? raw?.likes_count ?? 0),
+    videoCount: Number(raw?.videoCount ?? raw?.video_count ?? 0),
+    followersGained: raw?.followersGained ?? raw?.followers_gained ?? null,
+    followersLost: raw?.followersLost ?? raw?.followers_lost ?? null,
+  };
+}
+
 // Get connected accounts
 // Demande une URL d'upload direct (jusqu'à 5 Go) + l'URL publique finale du fichier
 export async function zernioGetMediaPresignUrl(filename: string, contentType: string) {
