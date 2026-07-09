@@ -36,7 +36,7 @@ function extractHashtags(raw?: string) {
 
 const MEDALS = ["🥇", "🥈", "🥉"];
 
-function InsightCard({ icon, label, value, detail, accent = C.violetLight }: {
+function InsightCard({ icon, label, value, detail, accent = C.greenLight }: {
   icon: string; label: string; value: string | null; detail: string; accent?: string;
 }) {
   return (
@@ -173,7 +173,7 @@ export function HistoryView({ videos }: { videos: Video[] }) {
                   <div className="text-xs" style={{ color: C.textMuted, fontFamily: FONT_MONO }}>{v.publishedDate}</div>
                 </div>
                 <div className="text-right shrink-0">
-                  <div className="font-bold" style={{ fontFamily: FONT_MONO, color: i === 0 ? C.violetLight : C.textPrimary }}>
+                  <div className="font-bold" style={{ fontFamily: FONT_MONO, color: i === 0 ? C.greenLight : C.textPrimary }}>
                     {formatNum(v.views || 0)}
                   </div>
                   <div className="text-xs" style={{ color: C.emerald, fontFamily: FONT_MONO }}>
@@ -224,14 +224,14 @@ export function HistoryView({ videos }: { videos: Video[] }) {
             label="Meilleure plateforme"
             value={bestPlatform ? PLATFORMS[bestPlatform.key]?.label : null}
             detail={bestPlatform ? `${formatNum(Math.round(bestPlatform.avg))} vues / vidéo` : "Publie sur 2+ plateformes pour comparer"}
-            accent={C.violetLight}
+            accent={C.greenLight}
           />
           <InsightCard
             icon="⏰"
             label="Meilleur créneau"
             value={bestHour ? bestHour.key : null}
             detail={bestHour ? `${formatNum(Math.round(bestHour.avg))} vues / vidéo` : "Renseigne l'heure de publication"}
-            accent={C.cyan}
+            accent={C.orange}
           />
           <InsightCard
             icon="⏱"
@@ -252,14 +252,14 @@ export function HistoryView({ videos }: { videos: Video[] }) {
             label="Fréquence de publication"
             value={avgGapDays !== null ? `1 vidéo / ${avgGapDays.toFixed(1)}j` : null}
             detail={avgGapDays !== null ? "en moyenne entre deux publications" : "Publie à 2+ dates différentes"}
-            accent={C.cyanLight}
+            accent={C.orangeLight}
           />
           <InsightCard
             icon="#️⃣"
             label="Meilleur hashtag"
             value={topHashtags.length ? topHashtags[0].tag : null}
             detail={topHashtags.length ? `${formatNum(topHashtags[0].avg)} vues / vidéo en moy. (${topHashtags[0].count} vidéos)` : "Ajoute des hashtags à 2+ vidéos pour comparer"}
-            accent={C.violetLight}
+            accent={C.greenLight}
           />
         </div>
       </div>
@@ -276,7 +276,7 @@ export function HistoryView({ videos }: { videos: Video[] }) {
           <div className="flex flex-wrap gap-2">
             {topHashtags.map((h) => (
               <div key={h.tag} className="rounded-xl px-3 py-2 flex items-center gap-2" style={{ background: C.card, border: `1px solid ${C.border}` }}>
-                <span className="text-sm font-semibold" style={{ color: C.violetLight, fontFamily: FONT_MONO }}>{h.tag}</span>
+                <span className="text-sm font-semibold" style={{ color: C.greenLight, fontFamily: FONT_MONO }}>{h.tag}</span>
                 <span className="text-xs" style={{ color: C.textSecondary }}>{formatNum(h.avg)} vues moy.</span>
                 <span className="text-xs" style={{ color: C.textMuted }}>({h.count}v)</span>
               </div>
