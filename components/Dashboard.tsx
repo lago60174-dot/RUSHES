@@ -28,7 +28,7 @@ function emptyForm(): Record<string, string> {
     id: "", platform: "tiktok", platforms: "tiktok", title: "", hashtags: "", notes: "", entryType: "planned",
     scheduledDate: todayStr(), scheduledTime: "18:00", publishedDate: todayStr(), publishedTime: "",
     durationSeconds: "", views: "", likes: "", comments: "", shares: "", saves: "",
-    newFollowers: "", avgWatchTime: "", completionRate: "",
+    newFollowers: "", avgWatchTime: "", completionRate: "", videoUrl: "",
   };
 }
 
@@ -167,6 +167,43 @@ export default function Dashboard() {
 
   async function persist(next: Video[]) { setVideos(next); }
 
+  // Envoie une vidéo "planned" à Zernio (planifiée à sa date/heure), pour
+  // que la planification soit réellement automatique dès qu'un fichier vidéo
+  // est fourni — au lieu d'attendre que l'utilisateur clique "↑ Zernio" plus
+  // tard. Ne fait rien si aucun compte n'est connecté pour la plateforme.
+  async function sendToZernio(list: Video[]) {
+    const notSent: string[] = [];
+    let sentCount = 0;
+    await Promise.all(list.map(async (v) => {
+      const account = zernioAccounts.find(a => a.platform === v.platform);
+      if (!account) {
+        notSent.push(`${PLATFORMS[v.platform]?.label || v.platform} : aucun compte connecté.`);
+        return;
+      }
+      try {
+        const scheduledFor = `${v.scheduledDate}T${v.scheduledTime || "00:00"}`;
+        const pubRes = await fetch("/api/zernio/publish", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            videoId: v.id, caption: v.title, videoUrl: v.videoUrl,
+            scheduledFor, targets: [{ platform: v.platform, accountId: account._id }],
+          }),
+        });
+        const data = await pubRes.json().catch(() => null);
+        if (!pubRes.ok) throw new Error(data?.error || "Échec de l'envoi à Zernio.");
+        sentCount += 1;
+      } catch (e) {
+        notSent.push(`${PLATFORMS[v.platform]?.label || v.platform} : ${(e as Error).message}`);
+      }
+    }));
+    if (notSent.length > 0) {
+      toast.error("Pas encore envoyée à Zernio", notSent.join(" · "));
+    } else if (sentCount > 0) {
+      toast.success("Planifiée sur Zernio ✓", `Envoi automatique programmé à l'heure choisie.`);
+    }
+    if (sentCount > 0) loadVideos(false); // récupère le zernio_post_id à jour
+  }
+
   async function handleSave() {
     if (!form.title?.trim()) return;
     setSaving(true);
@@ -180,6 +217,7 @@ export default function Dashboard() {
       platform: form.platform, title: form.title.trim(),
       hashtags: form.hashtags.trim(), notes: form.notes.trim(),
       status: isPublished ? "published" as const : "planned" as const,
+      videoUrl: form.videoUrl || undefined,
     };
     const record = isPublished ? {
       ...base, scheduledDate: form.scheduledDate, scheduledTime: form.scheduledTime,
@@ -210,12 +248,24 @@ export default function Dashboard() {
         const failed = results.filter(r => !r.ok);
         if (failed.length > 0) throw new Error(`${failed.length} vidéo(s) n'ont pas pu être enregistrées.`);
         toast.success(newVideos.length > 1 ? "Vidéos ajoutées ✓" : "Vidéo ajoutée ✓");
+
+        if (!isPublished && form.videoUrl) {
+          await sendToZernio(newVideos);
+        }
       } else {
+        const original = videos.find(v => v.id === form.id);
         const next = videos.map(v => v.id === form.id ? { ...v, ...record } as Video : v);
         persist(next);
         const res = await fetch(`/api/videos/${form.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, ...record }) });
         if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || "Échec de l'enregistrement."); }
         toast.success(modalMode === "publish" ? "Marquée comme publiée ✓" : "Modifications enregistrées ✓");
+
+        // N'envoie automatiquement que si la vidéo n'a encore jamais été
+        // transmise à Zernio (pas de zernio_post_id) — sinon on laisse le
+        // bouton "↑ Zernio" gérer une republication volontaire.
+        if (!isPublished && form.videoUrl && !original?.zernioPostId) {
+          await sendToZernio([{ ...(original || {} as Video), ...record, id: form.id } as Video]);
+        }
       }
     } catch (e) {
       toast.error("Erreur d'enregistrement", (e as Error).message);
