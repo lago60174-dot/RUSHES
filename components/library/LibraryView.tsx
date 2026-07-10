@@ -1,18 +1,21 @@
 "use client";
 import React from "react";
 import { C, FONT_MONO, PLATFORMS } from "../ui/constants";
-import { Video } from "../ui/types";
+import { Video, ZernioAccount } from "../ui/types";
+import { useToast } from "../ui/Toast";
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
 // ── AddVideoModal : ajoute une vidéo à partir d'un lien externe ────────────
 function AddVideoModal({
-  onClose, onDone,
+  onClose, onDone, accounts,
 }: {
   onClose: () => void;
   onDone: (videoRecords: Video[]) => void;
+  accounts: ZernioAccount[];
 }) {
+  const toast = useToast();
   const [videoUrl, setVideoUrl] = React.useState("");
   const [title, setTitle] = React.useState("");
   const [platforms, setPlatforms] = React.useState<string[]>(["tiktok"]);
@@ -81,6 +84,49 @@ function AddVideoModal({
         const res = await fetch("/api/videos", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(videoRecord) });
         if (!res.ok) throw new Error((await res.json()).error);
       }));
+
+      // Envoie chaque fiche à Zernio tout de suite (planifiée à la date/heure
+      // choisie) au lieu de la laisser en attente locale jusqu'à une action
+      // manuelle plus tard — c'est ce qui manquait pour que la planification
+      // fonctionne vraiment de bout en bout.
+      const scheduledFor = `${scheduledDate}T${scheduledTime}`;
+      const notSent: string[] = [];
+      await Promise.all(videoRecords.map(async (videoRecord) => {
+        const account = accounts.find((a) => a.platform === videoRecord.platform);
+        if (!account) {
+          notSent.push(`${PLATFORMS[videoRecord.platform]?.label || videoRecord.platform} : aucun compte connecté.`);
+          return;
+        }
+        try {
+          const pubRes = await fetch("/api/zernio/publish", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              videoId: videoRecord.id,
+              caption: videoRecord.title,
+              videoUrl: videoRecord.videoUrl,
+              scheduledFor,
+              targets: [{ platform: videoRecord.platform, accountId: account._id }],
+            }),
+          });
+          const pubData = await pubRes.json().catch(() => null);
+          if (!pubRes.ok) throw new Error(pubData?.error || "Échec de l'envoi à Zernio.");
+        } catch (e) {
+          notSent.push(`${PLATFORMS[videoRecord.platform]?.label || videoRecord.platform} : ${(e as Error).message}`);
+        }
+      }));
+
+      if (notSent.length > 0) {
+        toast.error(
+          "Vidéo enregistrée mais pas planifiée sur Zernio",
+          notSent.join(" · ")
+        );
+      } else {
+        toast.success(
+          "Planifiée sur Zernio ✓",
+          `Publication programmée le ${new Date(scheduledFor).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" })}.`
+        );
+      }
+
       onDone(videoRecords);
     } catch (e) {
       setError((e as Error).message);
@@ -194,11 +240,12 @@ function StatusBadge({ status }: { status: Video["status"] }) {
 // ou confirmée en asynchrone par le webhook Zernio — apparaît ici
 // automatiquement, sans qu'il faille cliquer sur Rafraîchir.
 export function LibraryView({
-  videos, onRefresh, onVideoAdded,
+  videos, onRefresh, onVideoAdded, zernioAccounts,
 }: {
   videos: Video[];
   onRefresh: () => void;
   onVideoAdded: (videos: Video[]) => void;
+  zernioAccounts: ZernioAccount[];
 }) {
   const [refreshing, setRefreshing] = React.useState(false);
   const [playingId, setPlayingId] = React.useState<string | null>(null);
@@ -310,6 +357,7 @@ export function LibraryView({
 
       {showAddModal && (
         <AddVideoModal onClose={() => setShowAddModal(false)}
+          accounts={zernioAccounts}
           onDone={(videoRecords) => {
             setShowAddModal(false);
             onVideoAdded(videoRecords);
