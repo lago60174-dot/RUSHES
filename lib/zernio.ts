@@ -58,8 +58,14 @@ export async function zernioGetMediaPresignUrl(filename: string, contentType: st
 }
 
 // List all connected social accounts
-export async function zernioListAccounts() {
-  const res = await fetch(`${ZERNIO_BASE}/accounts`, {
+// Filtre par profileId si fourni (recommandé — voir note sur les profiles
+// dans zernioGetConnectUrl) pour être sûr de ne voir que les comptes du bon
+// profile, même si la clé API a accès à plusieurs profiles.
+export async function zernioListAccounts(profileId?: string) {
+  const url = profileId
+    ? `${ZERNIO_BASE}/accounts?profileId=${encodeURIComponent(profileId)}`
+    : `${ZERNIO_BASE}/accounts`;
+  const res = await fetch(url, {
     headers: zernioHeaders(),
   });
   if (!res.ok) throw new Error(`Zernio accounts error: ${res.status}`);
@@ -75,15 +81,40 @@ export async function zernioListAccounts() {
 }
 
 // Get OAuth URL to connect a platform account
-export async function zernioGetConnectUrl(platform: string, profileId: string) {
+// ⚠️ CORRIGÉ (10/07) : ce endpoint attend le vrai profileId Zernio (l'ID du
+// "profile" — le conteneur qui regroupe tes comptes sociaux dans Zernio, ex.
+// "prof_abc123"), PAS une URL de redirection. L'appelant précédent
+// (app/api/zernio/connect/route.ts) passait ici l'URL de callback RUSHES à
+// la place du profileId — Zernio recevait donc un profileId invalide et
+// rattachait probablement le compte à un profil par défaut plutôt qu'au bon
+// profil. C'est très probablement la cause du décalage "Default vs RUSHES"
+// et du 404 sur /analytics (la clé API peut être restreinte à un profil
+// précis ; un post créé sous le mauvais profil devient invisible pour elle).
+// redirectUrl est optionnel et passé séparément via le paramètre redirect_url.
+export async function zernioGetConnectUrl(platform: string, profileId: string, redirectUrl?: string) {
+  const params = new URLSearchParams({ profileId });
+  if (redirectUrl) params.set("redirect_url", redirectUrl);
   const res = await fetch(
-    `${ZERNIO_BASE}/connect/${platform}?profileId=${profileId}`,
+    `${ZERNIO_BASE}/connect/${platform}?${params.toString()}`,
     { headers: zernioHeaders() }
   );
-  if (!res.ok) throw new Error(`Zernio connect error: ${res.status}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || err.message || `Zernio connect error: ${res.status}`);
+  }
   const data = await res.json().catch(() => null);
   if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /connect).");
   return data.authUrl as string;
+}
+
+// Liste les profiles Zernio visibles par la clé API (utile une seule fois
+// pour retrouver l'ID du bon profile à mettre dans ZERNIO_PROFILE_ID).
+export async function zernioListProfiles() {
+  const res = await fetch(`${ZERNIO_BASE}/profiles`, { headers: zernioHeaders() });
+  if (!res.ok) throw new Error(`Zernio profiles error: ${res.status}`);
+  const data = await res.json().catch(() => null);
+  if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /profiles).");
+  return data.profiles as Array<{ id: string; name: string; isDefault: boolean }>;
 }
 
 // Create a post (publish now or schedule)
@@ -98,6 +129,11 @@ export async function zernioCreatePost(params: {
     content: params.content,
     platforms: params.platforms,
   };
+  // Rattache explicitement le post au bon profile Zernio si connu — évite
+  // toute ambiguïté si la clé API a accès à plusieurs profiles.
+  if (process.env.ZERNIO_PROFILE_ID) {
+    body.profileId = process.env.ZERNIO_PROFILE_ID;
+  }
   if (params.scheduledFor) {
     body.scheduledFor = params.scheduledFor;
     body.timezone = params.timezone || "UTC";
