@@ -442,6 +442,7 @@ export default function Dashboard() {
                   videos={videos}
                   onRefresh={() => loadVideos(false)}
                   onVideoAdded={vs => setVideos(prev => [...prev, ...vs])}
+                  zernioAccounts={zernioAccounts}
                 />
               )}
             </div>
