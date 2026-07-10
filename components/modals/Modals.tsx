@@ -53,6 +53,39 @@ export function VideoModal({
   const isPublished = form.entryType === "published";
   function set(key: string, val: string) { setForm({ ...form, [key]: val }); }
 
+  const [uploading, setUploading] = React.useState(false);
+  const [uploadProgress, setUploadProgress] = React.useState(0);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  async function handleFileUpload(file: File) {
+    if (!file.type.startsWith("video/")) return;
+    setUploading(true); setUploadProgress(0);
+    try {
+      const signRes = await fetch("/api/zernio/media-presign", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: file.name, fileType: file.type }),
+      });
+      const signData = await signRes.json();
+      if (!signRes.ok) throw new Error(signData.error);
+
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", signData.uploadUrl);
+        xhr.setRequestHeader("Content-Type", file.type);
+        xhr.upload.onprogress = (e) => { if (e.lengthComputable) setUploadProgress(Math.round((e.loaded / e.total) * 100)); };
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`Échec de l'upload (${xhr.status})`));
+        xhr.onerror = () => reject(new Error("Échec de l'upload — vérifie ta connexion"));
+        xhr.send(file);
+      });
+
+      set("videoUrl", signData.publicUrl);
+    } catch {
+      // Échec silencieux ici : le champ reste vide, l'utilisateur peut réessayer.
+    } finally {
+      setUploading(false);
+    }
+  }
+
   const selectedPlatforms = (form.platforms || form.platform || "").split(",").map(p => p.trim()).filter(Boolean);
   function togglePlatform(key: string) {
     const next = selectedPlatforms.includes(key)
@@ -131,6 +164,28 @@ export function VideoModal({
                 </button>
               ))}
             </div>
+          )}
+
+          {!isPublished && (
+            <Field label="Vidéo (optionnel)">
+              <input ref={fileInputRef} type="file" accept="video/*" className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); }} />
+              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                className="w-full text-sm px-4 py-3 rounded-xl font-semibold text-left"
+                style={{ ...inputStyle, opacity: uploading ? 0.6 : 1, color: form.videoUrl ? C.textPrimary : C.textMuted }}>
+                {uploading ? `Upload en cours… ${uploadProgress}%` : form.videoUrl ? "✓ Vidéo prête — cliquer pour remplacer" : "📤 Choisir une vidéo"}
+              </button>
+              {uploading && (
+                <div className="h-1.5 rounded-full mt-2 overflow-hidden" style={{ background: C.border }}>
+                  <div className="h-full rounded-full transition-all" style={{ width: `${uploadProgress}%`, background: C.green }} />
+                </div>
+              )}
+              <div className="text-xs mt-2" style={{ color: C.textMuted }}>
+                {form.videoUrl
+                  ? "Sera envoyée automatiquement à Zernio à l'heure programmée."
+                  : "Sans vidéo, cette entrée reste un simple pense-bête — utilise le bouton « ↑ Zernio » plus tard pour l'envoyer manuellement."}
+              </div>
+            </Field>
           )}
 
           {!isPublished ? (
