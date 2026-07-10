@@ -3,7 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { zernioGetFollowerStats } from "@/lib/zernio";
 
 export async function GET(
-  _: Request,
+  req: Request,
   { params }: { params: Promise<{ accountId: string }> }
 ) {
   const { accountId } = await params;
@@ -15,8 +15,10 @@ export async function GET(
     return NextResponse.json({ error: "Missing accountId" }, { status: 400 });
   }
 
+  const platform = new URL(req.url).searchParams.get("platform") || undefined;
+
   try {
-    const stats = await zernioGetFollowerStats(accountId);
+    const stats = await zernioGetFollowerStats(accountId, platform);
     return NextResponse.json(stats);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
