@@ -9,33 +9,72 @@ function zernioHeaders() {
   };
 }
 
-// Stats publiques du compte (abonnés, likes cumulés, nb de vidéos, etc.) —
-// exposées par les APIs officielles des plateformes (ex. TikTok user.info.stats).
-// ⚠️ Reconstruite d'après la doc publique Zernio (docs.zernio.com) — je n'ai
-// pas pu tester en conditions réelles avec une clé API valide. Si le nom du
-// paramètre de requête ou la forme de la réponse diffère chez toi, ajuste
-// ci-dessous (l'essentiel — l'URL /accounts/follower-stats — est confirmé).
-export async function zernioGetFollowerStats(accountId: string) {
+type FollowerStats = {
+  followerCount: number;
+  followingCount: number;
+  likesCount: number;
+  videoCount: number;
+  followersGained: number | null;
+  followersLost: number | null;
+};
+
+function normalizeFollowerStats(raw: Record<string, unknown> | undefined | null): FollowerStats {
+  return {
+    followerCount: Number(raw?.followerCount ?? raw?.follower_count ?? 0),
+    followingCount: Number(raw?.followingCount ?? raw?.following_count ?? 0),
+    likesCount: Number(raw?.likesCount ?? raw?.likes_count ?? 0),
+    videoCount: Number(raw?.videoCount ?? raw?.video_count ?? 0),
+    followersGained: (raw?.followersGained ?? raw?.followers_gained ?? null) as number | null,
+    followersLost: (raw?.followersLost ?? raw?.followers_lost ?? null) as number | null,
+  };
+}
+
+// TikTok expose ses compteurs de compte (abonnés / likes cumulés / vidéos)
+// via un endpoint dédié côté Zernio (/analytics/tiktok/account-insights),
+// séparé de l'endpoint générique /accounts/follower-stats qui semble ne pas
+// couvrir TikTok (c'est ce qui causait les 0/0 : la requête réussissait
+// mais renvoyait une réponse vide pour ce compte-là).
+// ⚠️ Reconstruite d'après la doc publique Zernio — pas testée avec une vraie
+// clé API. Si le nom du paramètre de requête ou la forme de la réponse
+// diffère chez toi, ajuste ci-dessous.
+async function zernioGetTikTokAccountInsights(accountId: string): Promise<FollowerStats> {
+  const res = await fetch(`${ZERNIO_BASE}/analytics/tiktok/account-insights?accountId=${accountId}`, {
+    headers: zernioHeaders(),
+  });
+  if (!res.ok) throw new Error(`Zernio account-insights error: ${res.status}`);
+  const data = await res.json().catch(() => null);
+  if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /analytics/tiktok/account-insights).");
+  const raw = Array.isArray(data.accounts) ? data.accounts[0] : (data.insights ?? data.stats ?? data);
+  return normalizeFollowerStats(raw);
+}
+
+// Endpoint générique (comptes hors TikTok, ou fallback si l'endpoint
+// TikTok-spécifique échoue).
+async function zernioGetGenericFollowerStats(accountId: string): Promise<FollowerStats> {
   const res = await fetch(`${ZERNIO_BASE}/accounts/follower-stats?accountId=${accountId}`, {
     headers: zernioHeaders(),
   });
   if (!res.ok) throw new Error(`Zernio follower-stats error: ${res.status}`);
   const data = await res.json().catch(() => null);
   if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /accounts/follower-stats).");
-
-  // La forme exacte de la réponse (accounts[] vs objet unique, snake_case vs
-  // camelCase) n'est pas garantie à 100% par la doc publique — on gère les
-  // deux variantes les plus probables.
   const raw = Array.isArray(data.accounts) ? data.accounts[0] : (data.stats ?? data);
+  return normalizeFollowerStats(raw);
+}
 
-  return {
-    followerCount: Number(raw?.followerCount ?? raw?.follower_count ?? 0),
-    followingCount: Number(raw?.followingCount ?? raw?.following_count ?? 0),
-    likesCount: Number(raw?.likesCount ?? raw?.likes_count ?? 0),
-    videoCount: Number(raw?.videoCount ?? raw?.video_count ?? 0),
-    followersGained: raw?.followersGained ?? raw?.followers_gained ?? null,
-    followersLost: raw?.followersLost ?? raw?.followers_lost ?? null,
-  };
+// Stats publiques du compte (abonnés, likes cumulés, nb de vidéos, etc.).
+// platform est optionnel pour rester compatible avec les appels existants,
+// mais il faut le passer pour TikTok afin d'utiliser le bon endpoint.
+export async function zernioGetFollowerStats(accountId: string, platform?: string) {
+  if (platform === "tiktok") {
+    try {
+      return await zernioGetTikTokAccountInsights(accountId);
+    } catch {
+      // Si l'endpoint dédié échoue (pas encore actif, mauvaise route, etc.)
+      // on retente sur l'endpoint générique plutôt que de tout casser.
+      return zernioGetGenericFollowerStats(accountId);
+    }
+  }
+  return zernioGetGenericFollowerStats(accountId);
 }
 
 // Get connected accounts
