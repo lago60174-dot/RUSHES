@@ -112,8 +112,37 @@ export default function Dashboard() {
       }
     }
 
+    // Filet de sécurité côté client : si une vidéo "planned" a dépassé son
+    // heure programmée de plus de 3 min, on vérifie son vrai statut auprès
+    // de Zernio via /check-status, au lieu d'attendre passivement le webhook
+    // (qui peut ne jamais arriver si mal configuré côté Zernio) ou le
+    // prochain passage du cron GitHub Actions (jusqu'à 30 min de retard).
+    async function autoResolveOverdue() {
+      const now = Date.now();
+      const GRACE_MS = 3 * 60 * 1000;
+      const overdue = videosRef.current.filter(v => {
+        if (v.status !== "planned" || !v.zernioPostId || !v.scheduledDate) return false;
+        const t = new Date(`${v.scheduledDate}T${v.scheduledTime || "00:00"}:00`).getTime();
+        return !Number.isNaN(t) && now - t > GRACE_MS;
+      });
+      for (const v of overdue) {
+        if (cancelled) return;
+        try {
+          const res = await fetch(`/api/zernio/check-status/${v.id}`);
+          const data = await res.json().catch(() => null);
+          if (res.ok && data?.status && !cancelled) {
+            loadVideos(false);
+          }
+        } catch {
+          // Échec silencieux : nouvelle tentative à la prochaine passe.
+        }
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+
     autoSyncPublished();
-    const interval = setInterval(autoSyncPublished, AUTO_SYNC_INTERVAL_MS);
+    autoResolveOverdue();
+    const interval = setInterval(() => { autoSyncPublished(); autoResolveOverdue(); }, AUTO_SYNC_INTERVAL_MS);
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
