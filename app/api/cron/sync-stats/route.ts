@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
-import { zernioGetPostAnalytics, mapZernioAnalyticsMulti, zernioGetPost } from "@/lib/zernio";
+import {
+  zernioGetPostAnalytics,
+  mapZernioAnalyticsMulti,
+  zernioGetPost,
+  zernioCreatePost,
+  zernioListAccounts,
+} from "@/lib/zernio";
 
 // Synchronise automatiquement les statistiques de toutes les vidéos publiées
 // (tous utilisateurs) ayant un post Zernio lié. Déclenché soit par :
@@ -20,6 +26,97 @@ export async function GET(request: Request) {
   }
 
   const supabase = createSupabaseAdminClient();
+
+  // ── Étape 0 : publication automatique des vidéos jamais envoyées ───────
+  // "Ajouter une vidéo" crée juste une fiche locale (status "planned" +
+  // scheduled_date/time) SANS jamais appeler Zernio — l'envoi réel ne se
+  // produisait auparavant que si l'utilisateur ouvrait manuellement la
+  // modale de publication et cliquait sur "Publier". Résultat : une vidéo
+  // planifiée dont l'heure passait ne se publiait jamais toute seule.
+  // On répare ça ici : toute vidéo "planned" sans zernio_post_id dont
+  // l'heure programmée est dépassée est envoyée à Zernio directement par
+  // le cron, comme si l'utilisateur avait cliqué sur "Publier" lui-même.
+  let autoPublished = 0;
+  const autoPublishErrors: Array<{ id: string; error: string }> = [];
+  {
+    const { data: neverSent } = await supabase
+      .from("videos")
+      .select("id, platform, title, hashtags, video_url, scheduled_date, scheduled_time")
+      .eq("status", "planned")
+      .is("zernio_post_id", null);
+
+    const now = Date.now();
+    const overdueNeverSent = (neverSent || []).filter((v) => {
+      if (!v.scheduled_date) return false;
+      const iso = `${v.scheduled_date}T${v.scheduled_time || "00:00"}:00`;
+      const t = new Date(iso).getTime();
+      return !Number.isNaN(t) && now - t > 0;
+    });
+
+    if (overdueNeverSent.length > 0) {
+      // Un seul appel pour récupérer les comptes connectés, réutilisé pour
+      // toutes les vidéos de ce passage (au lieu d'un appel par vidéo).
+      let accountsByPlatform: Record<string, string> = {};
+      try {
+        const accounts = await zernioListAccounts(process.env.ZERNIO_PROFILE_ID);
+        for (const a of accounts) {
+          if (!accountsByPlatform[a.platform]) accountsByPlatform[a.platform] = a._id;
+        }
+      } catch {
+        // Si la liste des comptes échoue, chaque vidéo tombera dans l'erreur
+        // "Aucun compte connecté" ci-dessous plutôt que de planter le cron.
+        accountsByPlatform = {};
+      }
+
+      for (const video of overdueNeverSent) {
+        try {
+          const accountId = accountsByPlatform[video.platform as string];
+          if (!accountId) {
+            throw new Error(`Aucun compte ${video.platform} connecté sur Zernio.`);
+          }
+          if (!video.video_url) {
+            throw new Error("Aucune vidéo liée (video_url manquant).");
+          }
+
+          const caption = [video.title, video.hashtags].filter(Boolean).join("\n\n");
+          const post = await zernioCreatePost({
+            content: caption,
+            platforms: [{ platform: video.platform as string, accountId }],
+            mediaUrl: video.video_url as string,
+            // Pas de scheduledFor : l'heure est déjà dépassée, on publie
+            // immédiatement plutôt que de reprogrammer dans le passé.
+          });
+
+          const { error: updateError } = await supabase
+            .from("videos")
+            .update({
+              zernio_post_id: post._id,
+              zernio_account_id: accountId,
+              zernio_targets: [{ platform: video.platform, accountId }],
+              status: "published",
+              published_date: new Date().toISOString().slice(0, 10),
+              published_time: new Date().toTimeString().slice(0, 5),
+              zernio_error: null,
+              zernio_error_category: null,
+            })
+            .eq("id", video.id);
+
+          if (updateError) throw new Error(updateError.message);
+          autoPublished += 1;
+        } catch (e) {
+          const message = (e as Error).message;
+          autoPublishErrors.push({ id: video.id as string, error: message });
+          // On marque la vidéo en échec plutôt que de la laisser silencieusement
+          // "planned" pour toujours — elle apparaît dans le bucket "Échec de
+          // publication" du calendrier, avec le motif exact, pour action manuelle.
+          await supabase
+            .from("videos")
+            .update({ status: "failed", zernio_error: message })
+            .eq("id", video.id);
+        }
+      }
+    }
+  }
 
   // ── Étape 1 : filet de sécurité pour les publications programmées ──────
   // Le webhook Zernio (/api/zernio/webhook) est censé faire passer une vidéo
@@ -133,5 +230,7 @@ export async function GET(request: Request) {
     errors,
     resolvedScheduled: resolved,
     resolveErrors,
+    autoPublished,
+    autoPublishErrors,
   });
 }
