@@ -226,7 +226,7 @@ export function ConnectedAccountsModal({
   React.useEffect(() => {
     accounts.forEach((a) => {
       setStatsByAccount((prev) => ({ ...prev, [a._id]: "loading" }));
-      fetch(`/api/zernio/follower-stats/${a._id}`)
+      fetch(`/api/zernio/follower-stats/${a._id}?platform=${a.platform}`)
         .then(async (r) => {
           const data = await r.json().catch(() => null);
           if (!r.ok || !data) throw new Error();
@@ -370,7 +370,7 @@ export function ZernioPublishModal({
     if (!tiktokAccountId) { setTiktokStats(null); setTiktokStatsError(""); return; }
     setTiktokStatsLoading(true);
     setTiktokStatsError("");
-    fetch(`/api/zernio/follower-stats/${tiktokAccountId}`)
+    fetch(`/api/zernio/follower-stats/${tiktokAccountId}?platform=tiktok`)
       .then(async (r) => {
         const data = await r.json().catch(() => null);
         if (!r.ok || !data) throw new Error(data?.error || "Impossible de récupérer les stats.");
