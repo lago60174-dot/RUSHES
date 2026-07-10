@@ -216,6 +216,27 @@ export function ConnectedAccountsModal({
     return map;
   }, [accounts]);
 
+  // Stats (abonnés / likes cumulés / vidéos) par compte connecté, chargées
+  // dès l'ouverture de la modale — c'est l'endroit le plus visible/logique
+  // pour les voir, plutôt qu'enfoui dans la modale de publication.
+  const [statsByAccount, setStatsByAccount] = React.useState<Record<string, {
+    followerCount: number; likesCount: number; videoCount: number;
+  } | "error" | "loading">>({});
+
+  React.useEffect(() => {
+    accounts.forEach((a) => {
+      setStatsByAccount((prev) => ({ ...prev, [a._id]: "loading" }));
+      fetch(`/api/zernio/follower-stats/${a._id}`)
+        .then(async (r) => {
+          const data = await r.json().catch(() => null);
+          if (!r.ok || !data) throw new Error();
+          setStatsByAccount((prev) => ({ ...prev, [a._id]: data }));
+        })
+        .catch(() => setStatsByAccount((prev) => ({ ...prev, [a._id]: "error" })));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accounts]);
+
   async function handleConnect(platformKey: string) {
     setConnecting(platformKey);
     setError("");
@@ -253,9 +274,27 @@ export function ConnectedAccountsModal({
                 <div>
                   <div className="text-sm font-semibold" style={{ color: p.color }}>{p.label}</div>
                   {platformAccounts.length > 0 ? (
-                    <div className="text-xs mt-0.5" style={{ color: C.textSecondary }}>
-                      {platformAccounts.map(a => `@${a.username}`).join(", ")}
-                    </div>
+                    <>
+                      <div className="text-xs mt-0.5" style={{ color: C.textSecondary }}>
+                        {platformAccounts.map(a => `@${a.username}`).join(", ")}
+                      </div>
+                      {platformAccounts.map((a) => {
+                        const s = statsByAccount[a._id];
+                        if (!s || s === "loading") {
+                          return <div key={a._id} className="text-xs mt-1" style={{ color: C.textMuted }}>Chargement des stats…</div>;
+                        }
+                        if (s === "error") {
+                          return <div key={a._id} className="text-xs mt-1" style={{ color: C.coral }}>Stats indisponibles</div>;
+                        }
+                        return (
+                          <div key={a._id} className="text-xs mt-1 flex gap-3" style={{ color: C.textPrimary }}>
+                            <span><b>{s.followerCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>abonnés</span></span>
+                            <span><b>{s.likesCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>likes</span></span>
+                            <span><b>{s.videoCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>vidéos</span></span>
+                          </div>
+                        );
+                      })}
+                    </>
                   ) : (
                     <div className="text-xs mt-0.5" style={{ color: C.textMuted }}>Non connecté</div>
                   )}
