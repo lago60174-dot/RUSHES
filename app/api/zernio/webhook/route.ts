@@ -53,9 +53,7 @@ function extractPost(body: Record<string, unknown>): ZernioPost | null {
 }
 
 function summarizeErrors(platforms: ZernioPlatformResult[] | undefined) {
-  const failed = (platforms || []).filter(
-    (p) => p.status === "failed" || p.error
-  );
+  const failed = (platforms || []).filter((p) => p.status === "failed" || p.error);
   if (failed.length === 0) return { message: null as string | null };
   const message = failed
     .map((p) => `${p.platform} : ${p.error || "échec inconnu"}`)
