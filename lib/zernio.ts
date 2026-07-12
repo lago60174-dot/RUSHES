@@ -16,6 +16,10 @@ type FollowerStats = {
   videoCount: number;
   followersGained: number | null;
   followersLost: number | null;
+  // Facebook uniquement : Meta n'expose pas de "likes cumulés" ni de
+  // "nombre de vidéos" au niveau Page (contrairement à TikTok) — page_views
+  // est la métrique la plus proche d'un indicateur d'audience globale.
+  pageViews?: number;
 };
 
 function normalizeFollowerStats(raw: Record<string, unknown> | undefined | null): FollowerStats {
@@ -117,8 +121,100 @@ function extractTikTokStatsFromAnyShape(raw: Record<string, unknown>): FollowerS
   return normalizeFollowerStats(flat);
 }
 
-// Endpoint générique (comptes hors TikTok, ou fallback si l'endpoint
-// TikTok-spécifique échoue).
+// Facebook expose ses compteurs de Page (abonnés / vues) via un endpoint
+// dédié côté Zernio, comme TikTok — mais avec des métriques différentes.
+// ✅ Endpoint confirmé via le SDK PHP officiel Zernio (zernio-dev/zernio-php) :
+// GET /v1/analytics/facebook/page-insights.
+// ⚠️ Contrairement à TikTok, Facebook n'a PAS de "likes cumulés" ni de
+// "nombre de vidéos" au niveau Page — ces concepts n'existent pas côté Meta
+// à ce niveau. On ne renvoie donc que abonnés + vues (likesCount/videoCount
+// restent à 0 pour Facebook, ce n'est pas un bug).
+// ⚠️ Important : Meta a déprécié les anciennes métriques `page_fans` et
+// `page_impressions` le 15 novembre 2025 (annonce officielle Meta for
+// Developers). Les appeler renvoie désormais une erreur "invalid metric".
+// La doc Zernio confirme que cet endpoint utilise déjà les nouveaux noms
+// post-dépréciation — on utilise donc directement les remplaçants
+// officiels : `page_follows` (remplace page_fans) et `page_media_view`
+// (remplace page_impressions).
+async function zernioGetFacebookPageInsights(accountId: string): Promise<FollowerStats> {
+  const until = new Date();
+  const since = new Date(until);
+  since.setDate(since.getDate() - 30);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+  const params = new URLSearchParams({
+    accountId,
+    metrics: "page_follows,page_media_view",
+    since: fmt(since),
+    until: fmt(until),
+  });
+
+  const res = await fetch(`${ZERNIO_BASE}/analytics/facebook/page-insights?${params.toString()}`, {
+    headers: zernioHeaders(),
+  });
+  if (!res.ok) {
+    console.error(`[zernio] page-insights (facebook) HTTP ${res.status} pour accountId=${accountId}`);
+    throw new Error(`Zernio page-insights error: ${res.status}`);
+  }
+  const data = await res.json().catch(() => null);
+  if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /analytics/facebook/page-insights).");
+
+  const stats = extractFacebookStatsFromAnyShape(data);
+  if (stats.followerCount === 0 && !stats.pageViews) {
+    console.error(
+      `[zernio] page-insights (facebook) a renvoyé des zéros pour accountId=${accountId}. Réponse brute :`,
+      JSON.stringify(data).slice(0, 2000)
+    );
+  }
+  return stats;
+}
+
+// Même logique de tolérance de forme que extractTikTokStatsFromAnyShape
+// (voir ce commentaire ci-dessus) — Zernio réutilise la même famille
+// d'enveloppes de réponse pour tous ses endpoints "*-insights".
+function extractFacebookStatsFromAnyShape(raw: Record<string, unknown>): FollowerStats {
+  const list = Array.isArray(raw?.data)
+    ? (raw.data as Record<string, unknown>[])
+    : Array.isArray(raw?.metrics)
+      ? (raw.metrics as Record<string, unknown>[])
+      : null;
+
+  const byName: Record<string, unknown> = {};
+  if (list) {
+    for (const m of list) {
+      const name = (m?.name as string | undefined) ?? (m?.metric as string | undefined);
+      if (!name) continue;
+      const totalValue = m?.totalValue as Record<string, unknown> | undefined;
+      const totalValueSnake = m?.total_value as Record<string, unknown> | undefined;
+      byName[name] = totalValue?.value ?? totalValueSnake?.value ?? m?.value ?? null;
+    }
+  } else if (raw?.metrics && typeof raw.metrics === "object" && !Array.isArray(raw.metrics)) {
+    Object.assign(byName, raw.metrics as Record<string, unknown>);
+  } else {
+    const flat = Array.isArray(raw?.accounts)
+      ? (raw.accounts as Record<string, unknown>[])[0]
+      : ((raw?.insights ?? raw?.stats ?? raw) as Record<string, unknown>);
+    Object.assign(byName, flat);
+  }
+
+  const followerCount = Number(
+    byName.page_follows ?? byName.pageFollows ?? byName.followerCount ?? byName.follower_count ?? 0
+  );
+  const pageViews = Number(byName.page_media_view ?? byName.pageMediaView ?? 0) || undefined;
+
+  return {
+    followerCount,
+    followingCount: 0,
+    likesCount: 0,
+    videoCount: 0,
+    followersGained: (byName.followersGained ?? byName.followers_gained ?? null) as number | null,
+    followersLost: (byName.followersLost ?? byName.followers_lost ?? null) as number | null,
+    pageViews,
+  };
+}
+
+// Endpoint générique (comptes hors TikTok/Facebook, ou fallback si l'endpoint
+// spécifique échoue).
 async function zernioGetGenericFollowerStats(accountId: string): Promise<FollowerStats> {
   const res = await fetch(`${ZERNIO_BASE}/accounts/follower-stats?accountId=${accountId}`, {
     headers: zernioHeaders(),
@@ -142,7 +238,8 @@ async function zernioGetGenericFollowerStats(accountId: string): Promise<Followe
 
 // Stats publiques du compte (abonnés, likes cumulés, nb de vidéos, etc.).
 // platform est optionnel pour rester compatible avec les appels existants,
-// mais il faut le passer pour TikTok afin d'utiliser le bon endpoint.
+// mais il faut le passer pour TikTok et Facebook afin d'utiliser le bon
+// endpoint dédié pour chacun.
 export async function zernioGetFollowerStats(accountId: string, platform?: string) {
   if (platform === "tiktok") {
     try {
@@ -150,6 +247,13 @@ export async function zernioGetFollowerStats(accountId: string, platform?: strin
     } catch {
       // Si l'endpoint dédié échoue (pas encore actif, mauvaise route, etc.)
       // on retente sur l'endpoint générique plutôt que de tout casser.
+      return zernioGetGenericFollowerStats(accountId);
+    }
+  }
+  if (platform === "facebook") {
+    try {
+      return await zernioGetFacebookPageInsights(accountId);
+    } catch {
       return zernioGetGenericFollowerStats(accountId);
     }
   }
