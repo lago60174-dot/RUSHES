@@ -195,6 +195,12 @@ export async function GET(request: Request) {
   for (const video of videos || []) {
     try {
       const analytics = await zernioGetPostAnalytics(video.zernio_post_id as string);
+      if (Object.keys(analytics.platforms).length === 0) {
+        // Pas encore de données exploitables (synchro en cours côté Zernio,
+        // ou échec sur toutes les plateformes) — on retente au prochain
+        // passage plutôt que d'écraser les stats avec des zéros.
+        continue;
+      }
       const targetPlatforms: string[] =
         Array.isArray(video.zernio_targets) && video.zernio_targets.length > 0
           ? video.zernio_targets.map((t: { platform: string }) => t.platform)
