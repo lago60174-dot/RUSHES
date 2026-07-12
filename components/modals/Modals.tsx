@@ -275,7 +275,7 @@ export function ConnectedAccountsModal({
   // dès l'ouverture de la modale — c'est l'endroit le plus visible/logique
   // pour les voir, plutôt qu'enfoui dans la modale de publication.
   const [statsByAccount, setStatsByAccount] = React.useState<Record<string, {
-    followerCount: number; likesCount: number; videoCount: number;
+    followerCount: number; likesCount: number; videoCount: number; pageViews?: number;
   } | "error" | "loading">>({});
 
   React.useEffect(() => {
@@ -344,8 +344,14 @@ export function ConnectedAccountsModal({
                         return (
                           <div key={a._id} className="text-xs mt-1 flex gap-3" style={{ color: C.textPrimary }}>
                             <span><b>{s.followerCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>abonnés</span></span>
-                            <span><b>{s.likesCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>likes</span></span>
-                            <span><b>{s.videoCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>vidéos</span></span>
+                            {a.platform === "facebook" ? (
+                              <span><b>{(s.pageViews ?? 0).toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>vues (30j)</span></span>
+                            ) : (
+                              <>
+                                <span><b>{s.likesCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>likes</span></span>
+                                <span><b>{s.videoCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>vidéos</span></span>
+                              </>
+                            )}
                           </div>
                         );
                       })}
@@ -434,6 +440,33 @@ export function ZernioPublishModal({
       .catch((e) => { setTiktokStats(null); setTiktokStatsError((e as Error).message); })
       .finally(() => setTiktokStatsLoading(false));
   }, [tiktokAccountId]);
+
+  // Stats de la Page Facebook sélectionnée (abonnés, vues) — même principe
+  // que TikTok ci-dessus, mais sans estimation de monétisation : Facebook
+  // n'a pas de seuil public unique équivalent au Creator Rewards Program de
+  // TikTok (ses programmes combinent plusieurs critères non exposés par
+  // l'API), donc on n'affiche que les chiffres bruts pour éviter d'induire
+  // en erreur sur un sujet financier.
+  const [facebookStats, setFacebookStats] = React.useState<{
+    followerCount: number; pageViews?: number;
+  } | null>(null);
+  const [facebookStatsLoading, setFacebookStatsLoading] = React.useState(false);
+  const [facebookStatsError, setFacebookStatsError] = React.useState("");
+
+  const facebookAccountId = selected.facebook;
+  React.useEffect(() => {
+    if (!facebookAccountId) { setFacebookStats(null); setFacebookStatsError(""); return; }
+    setFacebookStatsLoading(true);
+    setFacebookStatsError("");
+    fetch(`/api/zernio/follower-stats/${facebookAccountId}?platform=facebook`)
+      .then(async (r) => {
+        const data = await r.json().catch(() => null);
+        if (!r.ok || !data) throw new Error(data?.error || "Impossible de récupérer les stats.");
+        setFacebookStats(data);
+      })
+      .catch((e) => { setFacebookStats(null); setFacebookStatsError((e as Error).message); })
+      .finally(() => setFacebookStatsLoading(false));
+  }, [facebookAccountId]);
 
   async function handleFileUpload(file: File) {
     if (!file.type.startsWith("video/")) { setUploadError("Sélectionne un fichier vidéo."); return; }
@@ -574,6 +607,20 @@ export function ZernioPublishModal({
                                   Estimation basée sur le seuil public (10 000 abonnés) — TikTok ne communique le statut de monétisation réel qu'en interne, dans l'app.
                                 </div>
                               </>
+                            ) : null}
+                          </div>
+                        )}
+                        {checked && key === "facebook" && (
+                          <div className="mt-2 rounded-lg p-2.5" style={{ background: C.bg, border: `1px solid ${C.border}` }}>
+                            {facebookStatsLoading ? (
+                              <div className="text-xs" style={{ color: C.textMuted }}>Chargement des stats de la page…</div>
+                            ) : facebookStatsError ? (
+                              <div className="text-xs" style={{ color: C.coral }}>Stats indisponibles : {facebookStatsError}</div>
+                            ) : facebookStats ? (
+                              <div className="flex gap-4 text-xs">
+                                <div><span style={{ color: C.textPrimary, fontWeight: 700 }}>{facebookStats.followerCount.toLocaleString("fr-FR")}</span> <span style={{ color: C.textMuted }}>abonnés</span></div>
+                                <div><span style={{ color: C.textPrimary, fontWeight: 700 }}>{(facebookStats.pageViews ?? 0).toLocaleString("fr-FR")}</span> <span style={{ color: C.textMuted }}>vues (30j)</span></div>
+                              </div>
                             ) : null}
                           </div>
                         )}
