@@ -41,11 +41,25 @@ async function zernioGetTikTokAccountInsights(accountId: string): Promise<Follow
   const res = await fetch(`${ZERNIO_BASE}/analytics/tiktok/account-insights?accountId=${accountId}`, {
     headers: zernioHeaders(),
   });
-  if (!res.ok) throw new Error(`Zernio account-insights error: ${res.status}`);
+  if (!res.ok) {
+    console.error(`[zernio] account-insights (tiktok) HTTP ${res.status} pour accountId=${accountId}`);
+    throw new Error(`Zernio account-insights error: ${res.status}`);
+  }
   const data = await res.json().catch(() => null);
   if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /analytics/tiktok/account-insights).");
   const raw = Array.isArray(data.accounts) ? data.accounts[0] : (data.insights ?? data.stats ?? data);
-  return normalizeFollowerStats(raw);
+  const stats = normalizeFollowerStats(raw);
+  // Diagnostic : si la requête réussit (200) mais que tout reste à zéro, la
+  // cause la plus probable est un nom de champ différent de ceux attendus
+  // dans `raw` — on logge la réponse brute pour pouvoir corriger le mapping
+  // sans deviner à l'aveugle la prochaine fois que ça arrive.
+  if (stats.followerCount === 0 && stats.likesCount === 0 && stats.videoCount === 0) {
+    console.error(
+      `[zernio] account-insights (tiktok) a renvoyé des zéros pour accountId=${accountId}. Réponse brute :`,
+      JSON.stringify(data).slice(0, 2000)
+    );
+  }
+  return stats;
 }
 
 // Endpoint générique (comptes hors TikTok, ou fallback si l'endpoint
@@ -54,11 +68,21 @@ async function zernioGetGenericFollowerStats(accountId: string): Promise<Followe
   const res = await fetch(`${ZERNIO_BASE}/accounts/follower-stats?accountId=${accountId}`, {
     headers: zernioHeaders(),
   });
-  if (!res.ok) throw new Error(`Zernio follower-stats error: ${res.status}`);
+  if (!res.ok) {
+    console.error(`[zernio] follower-stats (générique) HTTP ${res.status} pour accountId=${accountId}`);
+    throw new Error(`Zernio follower-stats error: ${res.status}`);
+  }
   const data = await res.json().catch(() => null);
   if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /accounts/follower-stats).");
   const raw = Array.isArray(data.accounts) ? data.accounts[0] : (data.stats ?? data);
-  return normalizeFollowerStats(raw);
+  const stats = normalizeFollowerStats(raw);
+  if (stats.followerCount === 0 && stats.likesCount === 0 && stats.videoCount === 0) {
+    console.error(
+      `[zernio] follower-stats (générique) a renvoyé des zéros pour accountId=${accountId}. Réponse brute :`,
+      JSON.stringify(data).slice(0, 2000)
+    );
+  }
+  return stats;
 }
 
 // Stats publiques du compte (abonnés, likes cumulés, nb de vidéos, etc.).
@@ -249,29 +273,77 @@ export function verifyZernioWebhookSignature(rawBody: string, signature: string 
   return timingSafeEqual(expectedBuf, providedBuf);
 }
 
-// Get analytics for a specific post
+// Get analytics for a specific post.
+// ✅ Vérifiée mot pour mot contre docs.zernio.com/analytics/get-analytics —
+// contrairement à la version précédente, jamais confirmée en conditions
+// réelles. Deux erreurs corrigées :
+//  1. L'endpoint est GET /v1/analytics?postId=... (paramètre de requête),
+//     PAS /v1/analytics/{postId} (paramètre de chemin, qui n'existe pas et
+//     renvoie donc systématiquement 404 — c'est exactement l'erreur "Zernio
+//     analytics error: 404" observée dans les logs du cron GitHub Actions).
+//  2. La forme de la réponse est complètement différente : un objet
+//     `analytics` global + un tableau `platformAnalytics` (pas un objet
+//     `platforms` indexé par nom de plateforme).
 export async function zernioGetPostAnalytics(postId: string) {
-  const res = await fetch(`${ZERNIO_BASE}/analytics/${postId}`, {
+  const res = await fetch(`${ZERNIO_BASE}/analytics?postId=${encodeURIComponent(postId)}`, {
     headers: zernioHeaders(),
   });
+
+  // La doc précise explicitement que ces deux codes sont normaux pour un
+  // post qui vient d'être publié : 202 = synchro encore en cours côté
+  // Zernio, 424 = aucune plateforme n'a encore pu remonter de stats. Dans
+  // les deux cas ce n'est pas une erreur, juste "rien à afficher pour le
+  // moment" — le prochain passage du cron réessaiera.
+  if (res.status === 202 || res.status === 424) {
+    return { postId, platforms: {} as Record<string, Record<string, number>> };
+  }
+  if (res.status === 402) {
+    throw new Error("Zernio : l'add-on Analytics n'est pas activé sur ce compte.");
+  }
   if (!res.ok) throw new Error(`Zernio analytics error: ${res.status}`);
-  return res.json() as Promise<{
-    postId: string;
-    platforms: Record<
-      string,
-      {
-        views?: number;
-        impressions?: number;
-        likes?: number;
-        comments?: number;
-        shares?: number;
-        saves?: number;
-        newFollowers?: number;
-        avgWatchTime?: number;
-        completionRate?: number;
-      }
-    >;
-  }>;
+
+  const data = await res.json().catch(() => null);
+  if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /analytics).");
+
+  const platforms: Record<string, Record<string, number>> = {};
+  const list = Array.isArray(data.platformAnalytics) ? data.platformAnalytics : [];
+  for (const p of list) {
+    const a = (p?.analytics || {}) as Record<string, number>;
+    platforms[p.platform] = {
+      views: a.views || a.impressions || 0,
+      impressions: a.impressions || 0,
+      likes: a.likes || 0,
+      comments: a.comments || 0,
+      shares: a.shares || 0,
+      saves: a.saves || 0,
+      // Le follow-count attribué à un post précis n'est pas exposé par
+      // Zernio (seul le suivi de compte global l'est, via follower-stats) —
+      // ce champ reste donc toujours à 0 ici, ce n'est pas un bug.
+      newFollowers: 0,
+      // Uniquement disponible pour Instagram Reels ; 0 pour les autres
+      // plateformes (dont TikTok) car Zernio n'expose pas cette donnée là.
+      avgWatchTime: a.igReelsAvgWatchTime || 0,
+      completionRate: 0,
+    };
+  }
+
+  // Filet de sécurité si jamais platformAnalytics est absent (ne devrait
+  // pas arriver d'après la doc, mais évite un objet vide silencieux).
+  if (list.length === 0 && data.analytics && data.platform) {
+    const a = data.analytics as Record<string, number>;
+    platforms[data.platform] = {
+      views: a.views || a.impressions || 0,
+      likes: a.likes || 0,
+      comments: a.comments || 0,
+      shares: a.shares || 0,
+      saves: a.saves || 0,
+      newFollowers: 0,
+      avgWatchTime: a.igReelsAvgWatchTime || 0,
+      completionRate: 0,
+    };
+  }
+
+  return { postId, platforms };
 }
 
 // Map Zernio analytics to our video schema
