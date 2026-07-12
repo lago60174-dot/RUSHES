@@ -14,16 +14,26 @@ import { verifyZernioWebhookSignature } from "@/lib/zernio";
 //   Events  : post.scheduled, post.published, post.failed, post.partial, post.cancelled
 //   Secret  : la même valeur que ZERNIO_WEBHOOK_SECRET côté Vercel
 
+// ✅ Vérifiée mot pour mot contre docs.zernio.com (section Webhooks) —
+// contrairement à la version précédente. Deux erreurs corrigées :
+//  1. L'ID du post dans l'enveloppe webhook est `post.id`, PAS `post._id`
+//     (qui n'existe que dans les réponses de l'API REST classique, comme
+//     POST /v1/posts). Avec l'ancien code, `"_id" in candidate` était
+//     TOUJOURS faux pour un vrai webhook Zernio → extractPost renvoyait
+//     null → CHAQUE webhook reçu depuis la mise en place était ignoré en
+//     silence (retour "ignored: true" sans toucher la base).
+//  2. Le détail d'erreur par plateforme est un champ unique `error`
+//     (string), PAS deux champs `errorMessage` + `errorCategory` (ceux-là
+//     n'existent que sur l'objet Post renvoyé par GET /v1/posts/:id).
 type ZernioPlatformResult = {
   platform: string;
-  accountId?: string | { _id: string };
+  accountId?: string;
   status: string;
-  errorMessage?: string;
-  errorCategory?: string;
+  error?: string;
 };
 
 type ZernioPost = {
-  _id: string;
+  id: string;
   status?: string;
   platforms?: ZernioPlatformResult[];
   publishedAt?: string;
@@ -35,21 +45,22 @@ function extractPost(body: Record<string, unknown>): ZernioPost | null {
     (body.data as ZernioPost | undefined) ??
     body.post ??
     body;
-  if (candidate && typeof candidate === "object" && "_id" in candidate) {
-    return candidate as ZernioPost;
+  if (candidate && typeof candidate === "object" && ("id" in candidate || "_id" in candidate)) {
+    const c = candidate as Record<string, unknown>;
+    return { ...(c as object), id: (c.id ?? c._id) as string } as ZernioPost;
   }
   return null;
 }
 
 function summarizeErrors(platforms: ZernioPlatformResult[] | undefined) {
   const failed = (platforms || []).filter(
-    (p) => p.status === "failed" || p.errorMessage
+    (p) => p.status === "failed" || p.error
   );
-  if (failed.length === 0) return { message: null as string | null, category: null as string | null };
+  if (failed.length === 0) return { message: null as string | null };
   const message = failed
-    .map((p) => `${p.platform} : ${p.errorMessage || "échec inconnu"}`)
+    .map((p) => `${p.platform} : ${p.error || "échec inconnu"}`)
     .join(" · ");
-  return { message, category: failed[0].errorCategory || null };
+  return { message };
 }
 
 export async function POST(request: Request) {
@@ -71,7 +82,7 @@ export async function POST(request: Request) {
   const post = extractPost(body);
 
   // Webhook de test depuis le dashboard Zernio, ou évènement non lié à un post
-  if (!event || !post?._id) {
+  if (!event || !post?.id) {
     return NextResponse.json({ ok: true, ignored: true });
   }
 
@@ -79,7 +90,7 @@ export async function POST(request: Request) {
   const { data: video } = await db
     .from("videos")
     .select("id")
-    .eq("zernio_post_id", post._id)
+    .eq("zernio_post_id", post.id)
     .maybeSingle();
 
   if (!video) {
@@ -87,7 +98,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, ignored: true });
   }
 
-  const { message, category } = summarizeErrors(post.platforms);
+  const { message } = summarizeErrors(post.platforms);
   const now = new Date();
 
   let update: Record<string, unknown> | null = null;
@@ -113,7 +124,7 @@ export async function POST(request: Request) {
         published_date: (post.publishedAt || now.toISOString()).slice(0, 10),
         published_time: (post.publishedAt ? new Date(post.publishedAt) : now).toTimeString().slice(0, 5),
         zernio_error: message,
-        zernio_error_category: category,
+        zernio_error_category: null,
         zernio_platform_status: post.platforms || [],
       };
       break;
@@ -122,7 +133,7 @@ export async function POST(request: Request) {
       update = {
         status: "failed",
         zernio_error: message || "La publication a échoué sur Zernio.",
-        zernio_error_category: category,
+        zernio_error_category: null,
         zernio_platform_status: post.platforms || [],
       };
       break;
