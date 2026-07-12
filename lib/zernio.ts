@@ -32,13 +32,32 @@ function normalizeFollowerStats(raw: Record<string, unknown> | undefined | null)
 // TikTok expose ses compteurs de compte (abonnés / likes cumulés / vidéos)
 // via un endpoint dédié côté Zernio (/analytics/tiktok/account-insights),
 // séparé de l'endpoint générique /accounts/follower-stats qui semble ne pas
-// couvrir TikTok (c'est ce qui causait les 0/0 : la requête réussissait
-// mais renvoyait une réponse vide pour ce compte-là).
-// ⚠️ Reconstruite d'après la doc publique Zernio — pas testée avec une vraie
-// clé API. Si le nom du paramètre de requête ou la forme de la réponse
-// diffère chez toi, ajuste ci-dessous.
+// couvrir TikTok.
+// ⚠️ Mise à jour d'après le changelog Zernio (24 avril 2026) : les
+// "key params" documentés sont accountId, metrics, since, until, metricType
+// — la version précédente n'envoyait QUE accountId. C'est très probablement
+// la vraie cause des 0/0 : la requête réussissait (200) mais sans préciser
+// quelles métriques on voulait, Zernio ne renvoyait rien d'exploitable.
+// Le changelog précise aussi que cet endpoint réutilise la même enveloppe de
+// réponse que /analytics/instagram/account-insights, qui structure les
+// métriques par nom (pas forcément des champs plats followerCount /
+// follower_count) — le parsing ci-dessous gère donc plusieurs formes
+// possibles, faute de pouvoir tester la forme exacte avec une vraie clé API.
 async function zernioGetTikTokAccountInsights(accountId: string): Promise<FollowerStats> {
-  const res = await fetch(`${ZERNIO_BASE}/analytics/tiktok/account-insights?accountId=${accountId}`, {
+  const until = new Date();
+  const since = new Date(until);
+  since.setDate(since.getDate() - 30);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+  const params = new URLSearchParams({
+    accountId,
+    metrics: "follower_count,following_count,likes_count,video_count",
+    metricType: "totalvalue",
+    since: fmt(since),
+    until: fmt(until),
+  });
+
+  const res = await fetch(`${ZERNIO_BASE}/analytics/tiktok/account-insights?${params.toString()}`, {
     headers: zernioHeaders(),
   });
   if (!res.ok) {
@@ -47,12 +66,11 @@ async function zernioGetTikTokAccountInsights(accountId: string): Promise<Follow
   }
   const data = await res.json().catch(() => null);
   if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /analytics/tiktok/account-insights).");
-  const raw = Array.isArray(data.accounts) ? data.accounts[0] : (data.insights ?? data.stats ?? data);
-  const stats = normalizeFollowerStats(raw);
+  const stats = extractTikTokStatsFromAnyShape(data);
   // Diagnostic : si la requête réussit (200) mais que tout reste à zéro, la
-  // cause la plus probable est un nom de champ différent de ceux attendus
-  // dans `raw` — on logge la réponse brute pour pouvoir corriger le mapping
-  // sans deviner à l'aveugle la prochaine fois que ça arrive.
+  // cause la plus probable est une forme d'enveloppe différente de celles
+  // gérées ci-dessous — on logge la réponse brute pour corriger le mapping
+  // avec certitude au prochain passage, plutôt que de deviner une 3e fois.
   if (stats.followerCount === 0 && stats.likesCount === 0 && stats.videoCount === 0) {
     console.error(
       `[zernio] account-insights (tiktok) a renvoyé des zéros pour accountId=${accountId}. Réponse brute :`,
@@ -60,6 +78,43 @@ async function zernioGetTikTokAccountInsights(accountId: string): Promise<Follow
     );
   }
   return stats;
+}
+
+// Essaie plusieurs formes d'enveloppe possibles pour account-insights,
+// faute de forme 100% confirmée pour la variante TikTok :
+//  1. Enveloppe "totalValue" façon Instagram Analytics :
+//     { data: [ { name: "follower_count", totalValue: { value: N } }, ... ] }
+//  2. Objet "metrics" à plat : { metrics: { follower_count: N, ... } }
+//  3. Plate (ancienne hypothèse, gardée en dernier recours) :
+//     { followerCount, followingCount, ... } ou nichée sous
+//     accounts[0] / insights / stats
+function extractTikTokStatsFromAnyShape(raw: Record<string, unknown>): FollowerStats {
+  const list = Array.isArray(raw?.data)
+    ? (raw.data as Record<string, unknown>[])
+    : Array.isArray(raw?.metrics)
+      ? (raw.metrics as Record<string, unknown>[])
+      : null;
+
+  if (list) {
+    const byName: Record<string, unknown> = {};
+    for (const m of list) {
+      const name = (m?.name as string | undefined) ?? (m?.metric as string | undefined);
+      if (!name) continue;
+      const totalValue = m?.totalValue as Record<string, unknown> | undefined;
+      const totalValueSnake = m?.total_value as Record<string, unknown> | undefined;
+      byName[name] = totalValue?.value ?? totalValueSnake?.value ?? m?.value ?? null;
+    }
+    return normalizeFollowerStats(byName);
+  }
+
+  if (raw?.metrics && typeof raw.metrics === "object" && !Array.isArray(raw.metrics)) {
+    return normalizeFollowerStats(raw.metrics as Record<string, unknown>);
+  }
+
+  const flat = Array.isArray(raw?.accounts)
+    ? (raw.accounts as Record<string, unknown>[])[0]
+    : ((raw?.insights ?? raw?.stats ?? raw) as Record<string, unknown>);
+  return normalizeFollowerStats(flat);
 }
 
 // Endpoint générique (comptes hors TikTok, ou fallback si l'endpoint
