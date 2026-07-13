@@ -51,13 +51,39 @@ export function InstallBanner() {
       return;
     }
 
+    const w = window as unknown as { __deferredInstallPrompt?: BeforeInstallPromptEvent | null };
+
+    // Cas 1 : l'évènement est déjà arrivé avant même que ce composant ne
+    // soit monté (capturé au plus tôt par le script inline dans <head>).
+    if (w.__deferredInstallPrompt) {
+      setDeferredPrompt(w.__deferredInstallPrompt);
+      setVisible(true);
+      return;
+    }
+
+    // Cas 2 : le script inline le capture pendant que ce composant est déjà
+    // monté — il prévient via cet évènement custom.
+    const onReady = () => {
+      if (w.__deferredInstallPrompt) {
+        setDeferredPrompt(w.__deferredInstallPrompt);
+        setVisible(true);
+      }
+    };
+    window.addEventListener("rushes:bip-ready", onReady);
+
+    // Cas 3 (filet de sécurité redondant) : au cas où le script inline
+    // n'aurait pas pu s'exécuter pour une raison quelconque.
     const handler = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
       setVisible(true);
     };
     window.addEventListener("beforeinstallprompt", handler);
-    return () => window.removeEventListener("beforeinstallprompt", handler);
+
+    return () => {
+      window.removeEventListener("rushes:bip-ready", onReady);
+      window.removeEventListener("beforeinstallprompt", handler);
+    };
   }, []);
 
   function dismiss() {
