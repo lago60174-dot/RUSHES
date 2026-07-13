@@ -35,6 +35,26 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="fr">
       <head>
+        {/* Capture beforeinstallprompt le plus tôt possible (avant même
+            l'hydratation React) pour ne jamais rater l'évènement si Chrome
+            le déclenche très vite après le chargement — le composant
+            InstallBanner (monté plus tard) va simplement relire
+            window.__deferredInstallPrompt au lieu de dépendre uniquement
+            de son propre addEventListener, qui pourrait s'attacher trop tard. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              window.__deferredInstallPrompt = null;
+              window.addEventListener("beforeinstallprompt", function (e) {
+                e.preventDefault();
+                window.__deferredInstallPrompt = e;
+                window.dispatchEvent(new Event("rushes:bip-ready"));
+              });
+            `,
+          }}
+        />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
           href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
           rel="stylesheet"
