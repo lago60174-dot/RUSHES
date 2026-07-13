@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { verifyZernioWebhookSignature } from "@/lib/zernio";
+import { sendPush } from "@/lib/push";
 
 // Endpoint appelé par Zernio (pas par le navigateur de l'utilisateur) à
 // chaque changement de statut d'un post : programmé, publié, échoué,
@@ -11,7 +12,8 @@ import { verifyZernioWebhookSignature } from "@/lib/zernio";
 // À configurer une seule fois dans le dashboard Zernio :
 //   Settings → Webhooks → Add webhook
 //   URL     : https://<ton-domaine>/api/zernio/webhook
-//   Events  : post.scheduled, post.published, post.failed, post.partial, post.cancelled
+//   Events  : post.scheduled, post.published, post.failed, post.partial,
+//             post.cancelled, account.disconnected
 //   Secret  : la même valeur que ZERNIO_WEBHOOK_SECRET côté Vercel
 
 // ✅ Vérifiée mot pour mot contre docs.zernio.com (section Webhooks) —
@@ -77,6 +79,29 @@ export async function POST(request: Request) {
   }
 
   const event = (body.event || body.type) as string | undefined;
+
+  // account.disconnected n'est pas rattaché à un post — à traiter à part,
+  // avant le early-return "pas de post" ci-dessous qui l'ignorerait sinon.
+  // ✅ Champs confirmés mot pour mot dans le changelog docs.zernio.com :
+  // accountId, profileId, disconnectionType ("intentional" | "unintentional").
+  if (event === "account.disconnected") {
+    const data = (body.data as Record<string, unknown> | undefined) ?? body;
+    const platform = (data.platform as string | undefined) || "un compte";
+    const username = (data.username as string | undefined) || (data.displayName as string | undefined) || "";
+    const disconnectionType = data.disconnectionType as string | undefined;
+    const reason = disconnectionType === "intentional"
+      ? "déconnecté manuellement"
+      : "déconnecté (token expiré ou révoqué)";
+
+    sendPush("account_disconnected", {
+      title: "⚠️ Compte déconnecté",
+      body: `${platform}${username ? ` (${username})` : ""} a été ${reason}. Reconnecte-le dans « Réseaux sociaux ».`,
+      url: "/",
+    }).catch((e) => console.error("[push] account_disconnected:", e));
+
+    return NextResponse.json({ ok: true });
+  }
+
   const post = extractPost(body);
 
   // Webhook de test depuis le dashboard Zernio, ou évènement non lié à un post
@@ -87,7 +112,7 @@ export async function POST(request: Request) {
   const db = createSupabaseAdminClient();
   const { data: video } = await db
     .from("videos")
-    .select("id")
+    .select("id, title, platform")
     .eq("zernio_post_id", post.id)
     .maybeSingle();
 
@@ -156,6 +181,27 @@ export async function POST(request: Request) {
 
   const { error } = await db.from("videos").update(update).eq("id", video.id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  const title = (video.title as string) || "Ta vidéo";
+  if (event === "post.published") {
+    sendPush("publish_success", {
+      title: "✅ Publication réussie",
+      body: `« ${title} » est en ligne.`,
+      url: "/",
+    }).catch((e) => console.error("[push] publish_success:", e));
+  } else if (event === "post.partial") {
+    sendPush("publish_failed", {
+      title: "⚠️ Publication partielle",
+      body: `« ${title} » : ${message || "échec sur au moins une plateforme."}`,
+      url: "/",
+    }).catch((e) => console.error("[push] publish_failed (partial):", e));
+  } else if (event === "post.failed" || event === "post.cancelled") {
+    sendPush("publish_failed", {
+      title: "❌ Échec de publication",
+      body: `« ${title} » : ${(update.zernio_error as string) || "la publication a échoué."}`,
+      url: "/",
+    }).catch((e) => console.error("[push] publish_failed:", e));
+  }
 
   return NextResponse.json({ ok: true });
 }
