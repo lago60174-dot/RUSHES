@@ -6,7 +6,9 @@ import {
   zernioGetPost,
   zernioCreatePost,
   zernioListAccounts,
+  zernioGetFollowerStats,
 } from "@/lib/zernio";
+import { sendPush } from "@/lib/push";
 
 // Synchronise automatiquement les statistiques de toutes les vidéos publiées
 // (tous utilisateurs) ayant un post Zernio lié. Déclenché soit par :
@@ -113,6 +115,11 @@ export async function GET(request: Request) {
             .from("videos")
             .update({ status: "failed", zernio_error: message })
             .eq("id", video.id);
+          sendPush("video_never_sent", {
+            title: "⏰ Vidéo jamais envoyée à Zernio",
+            body: `« ${video.title || "Une vidéo"} » était programmée mais n'a pas pu être envoyée : ${message}`,
+            url: "/",
+          }).catch((err) => console.error("[push] video_never_sent:", err));
         }
       }
     }
@@ -133,7 +140,7 @@ export async function GET(request: Request) {
   {
     const { data: planned } = await supabase
       .from("videos")
-      .select("id, zernio_post_id, scheduled_date, scheduled_time")
+      .select("id, title, zernio_post_id, scheduled_date, scheduled_time")
       .eq("status", "planned")
       .not("zernio_post_id", "is", null);
 
@@ -174,6 +181,24 @@ export async function GET(request: Request) {
         const { error: updateError } = await supabase.from("videos").update(update).eq("id", video.id);
         if (updateError) throw new Error(updateError.message);
         resolved += 1;
+
+        // Le webhook Zernio n'a manifestement pas fonctionné pour cette vidéo
+        // (sinon elle ne serait plus "planned") — on notifie quand même via
+        // ce filet de sécurité pour ne pas laisser passer l'évènement.
+        const videoTitle = (video.title as string) || "Une vidéo";
+        if (status === "published") {
+          sendPush("publish_success", {
+            title: "✅ Publication réussie",
+            body: `« ${videoTitle} » est en ligne.`,
+            url: "/",
+          }).catch((e) => console.error("[push] publish_success (fallback):", e));
+        } else if (status === "failed") {
+          sendPush("publish_failed", {
+            title: "❌ Échec de publication",
+            body: `« ${videoTitle} » : ${(update.zernio_error as string) || "la publication a échoué."}`,
+            url: "/",
+          }).catch((e) => console.error("[push] publish_failed (fallback):", e));
+        }
       } catch (e) {
         resolveErrors.push({ id: video.id as string, error: (e as Error).message });
       }
@@ -229,6 +254,57 @@ export async function GET(request: Request) {
     }
   }
 
+  // ── Étape 3 : paliers de croissance (tous les 100 abonnés) ─────────────
+  // Pour chaque compte connecté, compare le nombre d'abonnés actuel au
+  // dernier palier de 100 déjà notifié (table account_milestones). Au
+  // premier passage pour un compte donné, on enregistre le palier de départ
+  // SANS notifier (sinon on spammerait immédiatement avec toute la
+  // croissance déjà acquise avant l'activation des notifications).
+  let milestonesSent = 0;
+  const milestoneErrors: Array<{ accountId: string; error: string }> = [];
+  {
+    try {
+      const accounts = await zernioListAccounts(process.env.ZERNIO_PROFILE_ID);
+      for (const account of accounts) {
+        try {
+          const stats = await zernioGetFollowerStats(account._id, account.platform);
+          const currentMilestone = Math.floor(stats.followerCount / 100) * 100;
+
+          const { data: existing } = await supabase
+            .from("account_milestones")
+            .select("last_follower_milestone")
+            .eq("account_id", account._id)
+            .maybeSingle();
+
+          if (!existing) {
+            await supabase.from("account_milestones").insert({
+              account_id: account._id,
+              last_follower_milestone: currentMilestone,
+            });
+            continue;
+          }
+
+          if (currentMilestone > existing.last_follower_milestone) {
+            await sendPush("follower_milestone", {
+              title: "🎉 Nouveau palier d'abonnés",
+              body: `${account.platform} (@${account.username || account.name}) vient de dépasser ${currentMilestone.toLocaleString("fr-FR")} abonnés !`,
+              url: "/",
+            });
+            await supabase
+              .from("account_milestones")
+              .update({ last_follower_milestone: currentMilestone, updated_at: new Date().toISOString() })
+              .eq("account_id", account._id);
+            milestonesSent += 1;
+          }
+        } catch (e) {
+          milestoneErrors.push({ accountId: account._id, error: (e as Error).message });
+        }
+      }
+    } catch (e) {
+      milestoneErrors.push({ accountId: "*", error: (e as Error).message });
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     synced,
@@ -238,5 +314,7 @@ export async function GET(request: Request) {
     resolveErrors,
     autoPublished,
     autoPublishErrors,
+    milestonesSent,
+    milestoneErrors,
   });
 }
