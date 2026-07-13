@@ -10,6 +10,7 @@ import { LibraryView } from "./library/LibraryView";
 import { VideoModal, ZernioPublishModal, ConnectedAccountsModal } from "./modals/Modals";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { useToast } from "./ui/Toast";
+import { PushToggle } from "./pwa/PushToggle";
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function todayStr() { return new Date().toISOString().slice(0, 10); }
@@ -412,6 +413,7 @@ export default function Dashboard() {
           </nav>
 
           <div className="p-4 pb-6 space-y-2">
+            <PushToggle />
             <button onClick={() => setAccountsModalOpen(true)}
               className="w-full py-2.5 rounded-xl text-sm font-medium transition-all"
               style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
