@@ -344,7 +344,7 @@ export function ConnectedAccountsModal({
                         return (
                           <div key={a._id} className="text-xs mt-1 flex gap-3" style={{ color: C.textPrimary }}>
                             <span><b>{s.followerCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>abonnés</span></span>
-                            {a.platform === "facebook" ? (
+                            {a.platform === "facebook" || a.platform === "youtube" ? (
                               <span><b>{(s.pageViews ?? 0).toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>vues (30j)</span></span>
                             ) : (
                               <>
@@ -467,6 +467,36 @@ export function ZernioPublishModal({
       .catch((e) => { setFacebookStats(null); setFacebookStatsError((e as Error).message); })
       .finally(() => setFacebookStatsLoading(false));
   }, [facebookAccountId]);
+
+  // Stats de la chaîne YouTube sélectionnée (abonnés, vues). Comme pour
+  // Facebook, pas de "likes cumulés"/"vidéos" au niveau chaîne. Pour la
+  // monétisation, on affiche seulement la progression vers le seuil des
+  // 1 000 abonnés (vérifiable avec certitude) — le second critère du YPP
+  // (4 000 heures de visionnage sur 12 mois, ou 10M de vues Shorts sur 90
+  // jours) ne peut pas être vérifié ici : l'API Zernio plafonne la fenêtre
+  // de channel-insights à 89 jours, largement en-dessous des 12 mois
+  // requis, donc afficher un chiffre serait trompeur. Ce critère doit être
+  // vérifié directement dans YouTube Studio.
+  const [youtubeStats, setYoutubeStats] = React.useState<{
+    followerCount: number; pageViews?: number;
+  } | null>(null);
+  const [youtubeStatsLoading, setYoutubeStatsLoading] = React.useState(false);
+  const [youtubeStatsError, setYoutubeStatsError] = React.useState("");
+
+  const youtubeAccountId = selected.youtube;
+  React.useEffect(() => {
+    if (!youtubeAccountId) { setYoutubeStats(null); setYoutubeStatsError(""); return; }
+    setYoutubeStatsLoading(true);
+    setYoutubeStatsError("");
+    fetch(`/api/zernio/follower-stats/${youtubeAccountId}?platform=youtube`)
+      .then(async (r) => {
+        const data = await r.json().catch(() => null);
+        if (!r.ok || !data) throw new Error(data?.error || "Impossible de récupérer les stats.");
+        setYoutubeStats(data);
+      })
+      .catch((e) => { setYoutubeStats(null); setYoutubeStatsError((e as Error).message); })
+      .finally(() => setYoutubeStatsLoading(false));
+  }, [youtubeAccountId]);
 
   async function handleFileUpload(file: File) {
     if (!file.type.startsWith("video/")) { setUploadError("Sélectionne un fichier vidéo."); return; }
@@ -621,6 +651,30 @@ export function ZernioPublishModal({
                                 <div><span style={{ color: C.textPrimary, fontWeight: 700 }}>{facebookStats.followerCount.toLocaleString("fr-FR")}</span> <span style={{ color: C.textMuted }}>abonnés</span></div>
                                 <div><span style={{ color: C.textPrimary, fontWeight: 700 }}>{(facebookStats.pageViews ?? 0).toLocaleString("fr-FR")}</span> <span style={{ color: C.textMuted }}>vues (30j)</span></div>
                               </div>
+                            ) : null}
+                          </div>
+                        )}
+                        {checked && key === "youtube" && (
+                          <div className="mt-2 rounded-lg p-2.5" style={{ background: C.bg, border: `1px solid ${C.border}` }}>
+                            {youtubeStatsLoading ? (
+                              <div className="text-xs" style={{ color: C.textMuted }}>Chargement des stats de la chaîne…</div>
+                            ) : youtubeStatsError ? (
+                              <div className="text-xs" style={{ color: C.coral }}>Stats indisponibles : {youtubeStatsError}</div>
+                            ) : youtubeStats ? (
+                              <>
+                                <div className="flex gap-4 text-xs">
+                                  <div><span style={{ color: C.textPrimary, fontWeight: 700 }}>{youtubeStats.followerCount.toLocaleString("fr-FR")}</span> <span style={{ color: C.textMuted }}>abonnés</span></div>
+                                  <div><span style={{ color: C.textPrimary, fontWeight: 700 }}>{(youtubeStats.pageViews ?? 0).toLocaleString("fr-FR")}</span> <span style={{ color: C.textMuted }}>vues (30j)</span></div>
+                                </div>
+                                <div className="mt-1.5 text-xs font-semibold" style={{ color: youtubeStats.followerCount >= 1000 ? C.green : C.textMuted }}>
+                                  {youtubeStats.followerCount >= 1000
+                                    ? "✓ Seuil des 1 000 abonnés du Partner Program atteint"
+                                    : `${(1000 - youtubeStats.followerCount).toLocaleString("fr-FR")} abonnés avant le seuil du Partner Program`}
+                                </div>
+                                <div className="mt-1 text-xs" style={{ color: C.textMuted }}>
+                                  Il faut aussi 4 000h de visionnage sur 12 mois (ou 10M de vues Shorts sur 90 jours) — à vérifier dans YouTube Studio, non disponible via cette intégration.
+                                </div>
+                              </>
                             ) : null}
                           </div>
                         )}
