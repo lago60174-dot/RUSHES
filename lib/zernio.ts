@@ -16,8 +16,9 @@ type FollowerStats = {
   videoCount: number;
   followersGained: number | null;
   followersLost: number | null;
-  // Facebook uniquement : Meta n'expose pas de "likes cumulés" ni de
-  // "nombre de vidéos" au niveau Page (contrairement à TikTok) — page_views
+  // Facebook et YouTube uniquement : ni l'un ni l'autre n'expose de "likes
+  // cumulés" ni de "nombre de vidéos" au niveau compte (contrairement à
+  // TikTok) — page_views (Facebook) ou vues du channel sur 30j (YouTube)
   // est la métrique la plus proche d'un indicateur d'audience globale.
   pageViews?: number;
 };
@@ -236,10 +237,43 @@ async function zernioGetGenericFollowerStats(accountId: string): Promise<Followe
   return stats;
 }
 
+// YouTube expose ses abonnés/vues différemment des autres plateformes :
+// ✅ Endpoint confirmé mot pour mot via docs.zernio.com/analytics/get-youtube-channel-insights :
+// GET /v1/analytics/youtube/channel-insights.
+// ⚠️ Piège important : CET endpoint ne donne PAS le nombre d'abonnés actuel
+// — seulement des deltas (subscribersGained/subscribersLost) sur une
+// période. Pour le nombre d'abonnés actuel, il faut passer par l'endpoint
+// générique /v1/accounts/follower-stats (celui déjà utilisé comme fallback
+// pour les autres plateformes), qui lui renvoie bien un total. On combine
+// donc les deux : abonnés via l'endpoint générique, vues (30j) via
+// channel-insights.
+async function zernioGetYouTubeChannelStats(accountId: string): Promise<FollowerStats> {
+  const base = await zernioGetGenericFollowerStats(accountId);
+
+  try {
+    const params = new URLSearchParams({ accountId, metrics: "views" });
+    const res = await fetch(`${ZERNIO_BASE}/analytics/youtube/channel-insights?${params.toString()}`, {
+      headers: zernioHeaders(),
+    });
+    if (!res.ok) {
+      console.error(`[zernio] channel-insights (youtube) HTTP ${res.status} pour accountId=${accountId}`);
+      return base;
+    }
+    const data = await res.json().catch(() => null);
+    // Forme confirmée : { metrics: { views: { total, values[], breakdowns[] } } }
+    const views = data?.metrics?.views?.total;
+    if (typeof views === "number") return { ...base, pageViews: views };
+    return base;
+  } catch (e) {
+    console.error(`[zernio] channel-insights (youtube) erreur pour accountId=${accountId} :`, (e as Error).message);
+    return base;
+  }
+}
+
 // Stats publiques du compte (abonnés, likes cumulés, nb de vidéos, etc.).
 // platform est optionnel pour rester compatible avec les appels existants,
-// mais il faut le passer pour TikTok et Facebook afin d'utiliser le bon
-// endpoint dédié pour chacun.
+// mais il faut le passer pour TikTok, Facebook et YouTube afin d'utiliser
+// le bon endpoint dédié pour chacun.
 export async function zernioGetFollowerStats(accountId: string, platform?: string) {
   if (platform === "tiktok") {
     try {
@@ -256,6 +290,12 @@ export async function zernioGetFollowerStats(accountId: string, platform?: strin
     } catch {
       return zernioGetGenericFollowerStats(accountId);
     }
+  }
+  if (platform === "youtube") {
+    // zernioGetYouTubeChannelStats gère déjà ses propres erreurs en interne
+    // (retombe sur les stats génériques si channel-insights échoue), pas
+    // besoin d'un try/catch supplémentaire ici.
+    return zernioGetYouTubeChannelStats(accountId);
   }
   return zernioGetGenericFollowerStats(accountId);
 }
