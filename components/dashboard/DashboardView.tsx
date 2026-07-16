@@ -46,6 +46,7 @@ const COL_LABELS: Record<string, string> = {
 
 export function DashboardView({
   videos, platformFilter, setPlatformFilter, sortKey, setSortKey, sortDir, setSortDir, onEdit, syncingId, onSync,
+  accountFollowers, accountFollowersLoading,
 }: {
   videos: Video[];
   platformFilter: string;
@@ -57,6 +58,13 @@ export function DashboardView({
   onEdit: (v: Video) => void;
   syncingId: string | null;
   onSync: (id: string) => void;
+  // Total d'abonnés actuel, tous comptes connectés confondus (Zernio
+  // follower-stats), PAS une somme de v.newFollowers — voir note plus bas :
+  // Zernio n'expose jamais l'attribution d'abonnés à un post précis, cette
+  // valeur par vidéo reste donc toujours à 0 pour tout post auto-synchronisé
+  // (ce n'est pas un bug, c'est une limitation de l'API Zernio elle-même).
+  accountFollowers?: number | null;
+  accountFollowersLoading?: boolean;
 }) {
   const published = videos.filter((v) => v.status === "published");
   if (published.length === 0) {
@@ -144,7 +152,12 @@ export function DashboardView({
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard label="Vidéos publiées" value={String(totals.count)} accent={C.greenLight} />
         <StatCard label="Vues totales" value={formatNum(totals.views)} sub={`${formatNum(avgViewsPerVideo)} / vidéo en moy.`} accent={C.orangeLight} />
-        <StatCard label="Nouveaux abonnés" value={formatNum(totals.followers)} accent={C.emerald} />
+        <StatCard
+          label="Abonnés (comptes connectés)"
+          value={accountFollowersLoading ? "…" : accountFollowers != null ? formatNum(accountFollowers) : "—"}
+          sub="Total actuel, tous comptes Zernio connectés"
+          accent={C.emerald}
+        />
         <StatCard label="Taux d'engagement" value={`${engagementRate}%`} sub="(likes+comm.+partages+favoris) / vues" accent={C.amber} />
         <StatCard label="Likes totaux" value={formatNum(totals.likesSum)} accent={C.greenLight} />
         <StatCard label="Commentaires totaux" value={formatNum(totals.commentsSum)} accent={C.orangeLight} />
