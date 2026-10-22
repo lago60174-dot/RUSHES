@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isOwner } from "@/lib/owner";
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -9,7 +10,16 @@ export async function proxy(request: NextRequest) {
   // authentification par secret (CRON_SECRET / ZERNIO_WEBHOOK_SECRET) faite
   // dans la route elle-même. Il ne faut jamais les rediriger vers /login,
   // sinon l'appelant reçoit une page HTML au lieu de la réponse JSON.
-  if (pathname.startsWith("/api/cron") || pathname === "/api/zernio/webhook") {
+  // Telegram appelle /api/telegram/webhook (secret d'en-tête vérifié dans la
+  // route) ; /u/<jeton> et /api/upload servent aux vidéos > 20 Mo (jeton HMAC
+  // signé et limité à 30 min, vérifié dans la page et les routes).
+  if (
+    pathname.startsWith("/api/cron") ||
+    pathname === "/api/zernio/webhook" ||
+    pathname === "/api/telegram/webhook" ||
+    pathname.startsWith("/u/") ||
+    pathname.startsWith("/api/upload/")
+  ) {
     return NextResponse.next();
   }
 
@@ -38,6 +48,15 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  // App personnelle : une session valide ne suffit pas, il faut que ce soit
+  // le propriétaire (OWNER_EMAIL). Sinon on coupe la session immédiatement.
+  if (user && !isOwner(user.email)) {
+    await supabase.auth.signOut();
+    const denied = NextResponse.redirect(new URL("/login?error=forbidden", request.url));
+    response.cookies.getAll().forEach((c) => denied.cookies.set(c));
+    return denied;
+  }
+
   const isLoginPage = request.nextUrl.pathname === "/login";
   const isAuthCallback = request.nextUrl.pathname.startsWith("/auth");
 
@@ -52,5 +71,9 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
+  // Le manifest, le service worker et la page hors-ligne DOIVENT rester publics :
+  // le navigateur récupère le manifest sans cookies, et le service worker
+  // s'enregistre aussi depuis /login (avant connexion). Redirigés vers /login,
+  // ils renverraient du HTML : l'app ne serait plus installable.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|offline.html|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)"],
 };

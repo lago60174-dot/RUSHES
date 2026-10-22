@@ -1,41 +1,42 @@
 export const C = {
-  bg:           "#FFFFFF",
-  bgAlt:        "#F7F7F8",
-  surface:      "#FFFFFF",
-  surfaceAlt:   "#F4F4F5",
-  card:         "#F4F4F5",
-  cardHover:    "#E9E9EC",
-  border:       "#E4E4E7",
-  borderLight:  "#D4D4D8",
+  // Flare Studio — warm editorial orange with ink and cream surfaces
+  bg:           "#F8F6F2",
+  bgAlt:        "#F1EEE8",
+  surface:      "#FFFEFC",
+  surfaceAlt:   "#F6F2EC",
+  card:         "#FFFEFC",
+  cardHover:    "#F5EDE4",
+  border:       "#E7DED3",
+  borderLight:  "#D9CABC",
 
-  green:        "#16A34A",
-  greenLight:   "#22C55E",
-  greenBg:      "rgba(22,163,74,0.10)",
-  greenGlow:    "rgba(22,163,74,0.22)",
+  green:        "#EA580C",
+  greenLight:   "#F97316",
+  greenBg:      "rgba(234,88,12,0.09)",
+  greenGlow:    "rgba(234,88,12,0.20)",
 
   orange:       "#EA580C",
-  orangeLight:  "#F97316",
+  orangeLight:  "#FB923C",
   orangeBg:     "rgba(234,88,12,0.10)",
   orangeGlow:   "rgba(234,88,12,0.22)",
 
-  emerald:      "#16A34A",
-  emeraldBg:    "rgba(22,163,74,0.10)",
+  emerald:      "#0F766E",
+  emeraldBg:    "rgba(15,118,110,0.10)",
 
   coral:        "#DC2626",
   coralBg:      "rgba(220,38,38,0.08)",
 
-  amber:        "#CA8A04",
-  amberBg:      "rgba(202,138,4,0.10)",
+  amber:        "#B7791F",
+  amberBg:      "rgba(183,121,31,0.10)",
 
-  success:      "#16A34A",
+  success:      "#0F766E",
   error:        "#DC2626",
 
-  textPrimary:   "#18181B",
-  textSecondary: "#52525B",
-  textMuted:     "#A1A1AA",
+  textPrimary:   "#211A16",
+  textSecondary: "#66584E",
+  textMuted:     "#9A8D82",
 };
 
-export const FONT_DISPLAY = "'Space Grotesk', system-ui, -apple-system, sans-serif";
+export const FONT_DISPLAY = "'Plus Jakarta Sans', 'Space Grotesk', system-ui, -apple-system, sans-serif";
 export const FONT_MONO    = "'IBM Plex Mono', 'SFMono-Regular', monospace";
 
 export const PLATFORMS: Record<string, { label: string; short: string; color: string }> = {
@@ -46,10 +47,10 @@ export const PLATFORMS: Record<string, { label: string; short: string; color: st
 };
 
 export const TABS = [
-  { key: "calendar",  label: "Calendrier",     icon: "📅" },
-  { key: "dashboard", label: "Tableau de bord", icon: "📊" },
-  { key: "history",   label: "Historique",      icon: "🏆" },
-  { key: "ai",        label: "Analyse IA",      icon: "✦" },
+  { key: "calendar",  label: "Planning",     icon: "📅" },
+  { key: "dashboard", label: "Performances", icon: "📊" },
+  { key: "history",   label: "Publications",      icon: "🏆" },
+  { key: "ai",        label: "Studio IA",      icon: "✦" },
   { key: "library",   label: "Médiathèque",     icon: "🎞" },
 ];
 

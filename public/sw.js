@@ -1,9 +1,9 @@
-// Service worker RUSHES — cache les assets statiques pour un chargement
+// Service worker FLARE Studio — cache les assets statiques pour un chargement
 // instantané et un minimum de résilience hors-ligne. Ne met JAMAIS en cache
 // les requêtes API (données de compte, auth, contenu dynamique) : tout ce
 // qui passe par /api/ ou qui n'est pas un GET va systématiquement au réseau.
 
-const CACHE_VERSION = "rushes-v1";
+const CACHE_VERSION = "flare-v1";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const OFFLINE_URL = "/offline.html";
 
@@ -27,7 +27,7 @@ self.addEventListener("activate", (event) => {
       .then((keys) =>
         Promise.all(
           keys
-            .filter((key) => key.startsWith("rushes-") && key !== STATIC_CACHE)
+            .filter((key) => (key.startsWith("rushes-") || key.startsWith("flare-")) && key !== STATIC_CACHE)
             .map((key) => caches.delete(key))
         )
       )
@@ -88,7 +88,7 @@ self.addEventListener("fetch", (event) => {
 // ── Notifications push ──────────────────────────────────────────────────
 // Le serveur envoie un payload JSON {title, body, url} (voir lib/push.ts).
 self.addEventListener("push", (event) => {
-  let data = { title: "RUSHES", body: "", url: "/" };
+  let data = { title: "FLARE Studio", body: "", url: "/" };
   try {
     if (event.data) data = { ...data, ...event.data.json() };
   } catch {
@@ -106,7 +106,7 @@ self.addEventListener("push", (event) => {
   );
 });
 
-// Au clic : ramène au premier onglet RUSHES déjà ouvert s'il y en a un,
+// Au clic : ramène au premier onglet FLARE Studio déjà ouvert s'il y en a un,
 // sinon en ouvre un nouveau sur l'URL fournie par la notification.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();

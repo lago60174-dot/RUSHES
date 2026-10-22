@@ -1,6 +1,78 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: light;
+  --flare-orange: #EA580C;
+  --flare-ink: #211A16;
+  --flare-muted: #66584E;
+  --flare-paper: #F8F6F2;
+  --flare-line: #E7DED3;
+}
 *, *::before, *::after { box-sizing: border-box; }
-body { margin: 0; }
+html { background: var(--flare-paper); }
+body {
+  margin: 0;
+  background: var(--flare-paper);
+  color: var(--flare-ink);
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button, input, textarea, select { font: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 3px solid rgba(234, 88, 12, .24);
+  outline-offset: 2px;
+}
+::selection { color: #fff; background: #EA580C; }
+::placeholder { color: #A99B8F; }
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator { cursor: pointer; }
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #D9CABC; border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: #BDAA98; }
+
+.flare-app { background: var(--flare-paper); }
+.flare-sidebar {
+  background: #FFFEFC !important;
+  border-right: 1px solid var(--flare-line) !important;
+  box-shadow: 8px 0 32px rgba(52, 35, 20, .025);
+}
+.flare-sidebar > div:first-child { padding-top: 28px; }
+.flare-sidebar button, .flare-main button {
+  transition: background .18s ease, border-color .18s ease, color .18s ease, transform .18s ease, box-shadow .18s ease;
+}
+.flare-sidebar nav button:hover {
+  background: #FFF3E9 !important;
+  color: #C2410C !important;
+}
+.flare-sidebar nav button[style*="rgba(234,88,12"] {
+  box-shadow: inset 3px 0 0 #EA580C;
+}
+.flare-main { min-height: 100vh; }
+.flare-content { max-width: 1680px; margin: 0 auto; }
+.flare-page-heading {
+  padding: 10px 0 20px;
+  border-bottom: 1px solid rgba(217, 202, 188, .7);
+}
+.flare-page-heading h1 {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: clamp(1.55rem, 2vw, 2rem);
+  letter-spacing: -.045em;
+}
+.flare-main .rounded-2xl {
+  box-shadow: 0 3px 12px rgba(53, 36, 20, .025);
+}
+.flare-main button:hover { transform: translateY(-1px); }
+.flare-main button:active { transform: translateY(0); }
+
+@media (max-width: 1023px) {
+  .flare-content { padding: 20px 16px 104px; }
+  .flare-page-heading { padding: 6px 0 17px; margin-bottom: 20px !important; }
+  body { padding-bottom: env(safe-area-inset-bottom, 0px); }
+}

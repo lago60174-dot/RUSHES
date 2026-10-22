@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
-import { zernioGetPostAnalytics, mapZernioAnalyticsMulti } from "@/lib/zernio";
+import { syncVideoTargets } from "@/lib/sync";
 
 export async function GET(
   _: Request,
@@ -16,7 +16,7 @@ export async function GET(
 
   const { data: video, error: fetchError } = await db
     .from("videos")
-    .select("zernio_post_id, platform, zernio_targets")
+    .select("zernio_post_id, platform, zernio_account_id, zernio_targets")
     .eq("id", videoId)
     .eq("user_id", user.id) // isolation manuelle obligatoire
     .single();
@@ -29,31 +29,17 @@ export async function GET(
   }
 
   try {
-    const analytics = await zernioGetPostAnalytics(video.zernio_post_id);
-    const targetPlatforms: string[] =
-      Array.isArray(video.zernio_targets) && video.zernio_targets.length > 0
-        ? video.zernio_targets.map((t: { platform: string }) => t.platform)
-        : [video.platform];
-    const mapped = mapZernioAnalyticsMulti(analytics.platforms, targetPlatforms);
-
-    const { error: updateError } = await db
-      .from("videos")
-      .update({
-        views: mapped.views,
-        likes: mapped.likes,
-        comments: mapped.comments,
-        shares: mapped.shares,
-        saves: mapped.saves,
-        new_followers: mapped.newFollowers,
-        avg_watch_time: mapped.avgWatchTime,
-        completion_rate: mapped.completionRate,
-        zernio_synced_at: new Date().toISOString(),
-      })
-      .eq("id", videoId)
-      .eq("user_id", user.id); // isolation manuelle obligatoire
-
-    if (updateError) throw new Error(updateError.message);
-    return NextResponse.json({ ok: true, stats: mapped });
+    const result = await syncVideoTargets(db, user.id, {
+      id: videoId,
+      platform: video.platform,
+      zernio_post_id: video.zernio_post_id,
+      zernio_account_id: video.zernio_account_id,
+      zernio_targets: video.zernio_targets,
+    });
+    // Pas encore de stats côté Zernio : on ne renvoie pas de `stats` (le
+    // client ne touche alors à rien) plutôt que d'écraser avec des zéros.
+    if (!result.synced) return NextResponse.json({ ok: true, pending: true });
+    return NextResponse.json({ ok: true, stats: result.totals });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

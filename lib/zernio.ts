@@ -323,7 +323,18 @@ export async function zernioGetMediaPresignUrl(filename: string, contentType: st
 // Filtre par profileId si fourni (recommandé — voir note sur les profiles
 // dans zernioGetConnectUrl) pour être sûr de ne voir que les comptes du bon
 // profile, même si la clé API a accès à plusieurs profiles.
-export async function zernioListAccounts(profileId?: string) {
+export type ZernioAccountRaw = {
+  _id: string;
+  platform: string;
+  name: string;
+  username: string;
+  profilePicture?: string;
+  // ID du profile Zernio qui contient ce compte (normalisé : Zernio peut
+  // renvoyer une chaîne ou un objet { _id } selon l'endpoint).
+  profileId?: string;
+};
+
+export async function zernioListAccounts(profileId?: string): Promise<ZernioAccountRaw[]> {
   const url = profileId
     ? `${ZERNIO_BASE}/accounts?profileId=${encodeURIComponent(profileId)}`
     : `${ZERNIO_BASE}/accounts`;
@@ -333,13 +344,58 @@ export async function zernioListAccounts(profileId?: string) {
   if (!res.ok) throw new Error(`Zernio accounts error: ${res.status}`);
   const data = await res.json().catch(() => null);
   if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /accounts).");
-  return data.accounts as Array<{
-    _id: string;
-    platform: string;
-    name: string;
-    username: string;
-    profilePicture?: string;
-  }>;
+  return (data.accounts as Array<Record<string, unknown>>).map((a) => {
+    const rawProfile = a.profileId as unknown;
+    const pid =
+      typeof rawProfile === "string"
+        ? rawProfile
+        : (rawProfile as { _id?: string; id?: string } | null | undefined)?._id ??
+          (rawProfile as { _id?: string; id?: string } | null | undefined)?.id;
+    return { ...(a as object), profileId: pid } as ZernioAccountRaw;
+  });
+}
+
+// Déconnecte et supprime un compte social côté Zernio.
+export async function zernioDeleteAccount(accountId: string) {
+  const res = await fetch(`${ZERNIO_BASE}/accounts/${encodeURIComponent(accountId)}`, {
+    method: "DELETE",
+    headers: zernioHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || err.message || `Zernio disconnect error: ${res.status}`);
+  }
+}
+
+// ⚠️ Règle Zernio : UN SEUL compte par plateforme et par profile. Lancer le
+// connect sur un profile qui a déjà un TikTok REMPLACE ce TikTok au lieu d'en
+// ajouter un second. Pour avoir plusieurs TikTok / Facebook / etc., il faut un
+// profile par compte (les profiles sont gratuits, seuls les comptes sont
+// facturés). Cette fonction trouve un profile qui n'a pas encore de compte
+// pour cette plateforme — en réutilise un existant s'il y en a un de libre,
+// sinon en crée un nouveau.
+export async function zernioPickProfileForNewAccount(platform: string): Promise<string> {
+  const [profiles, accounts] = await Promise.all([zernioListProfiles(), zernioListAccounts()]);
+
+  const sameplatform = accounts.filter((a) => a.platform === platform);
+  // Garde-fou : si on ne sait pas dans quel profile vit un compte existant,
+  // on ne peut pas garantir qu'on ne va pas l'écraser → on refuse plutôt que
+  // de risquer de perdre un compte.
+  if (sameplatform.some((a) => !a.profileId)) {
+    throw new Error(
+      "Impossible de déterminer le profile Zernio d'un compte existant : connexion annulée pour ne pas l'écraser."
+    );
+  }
+  const taken = new Set(sameplatform.map((a) => a.profileId as string));
+
+  const preferred = process.env.ZERNIO_PROFILE_ID;
+  if (preferred && !taken.has(preferred)) return preferred;
+
+  const free = profiles.find((p) => !taken.has(p.id));
+  if (free) return free.id;
+
+  const n = sameplatform.length + 1;
+  return zernioCreateProfile(`FLARE ${platform} #${n}`);
 }
 
 // Get OAuth URL to connect a platform account
@@ -376,7 +432,31 @@ export async function zernioListProfiles() {
   if (!res.ok) throw new Error(`Zernio profiles error: ${res.status}`);
   const data = await res.json().catch(() => null);
   if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /profiles).");
-  return data.profiles as Array<{ id: string; name: string; isDefault: boolean }>;
+  return (data.profiles as Array<Record<string, unknown>>).map((p) => ({
+    id: (p._id ?? p.id) as string,
+    name: p.name as string,
+    isDefault: Boolean(p.isDefault),
+  }));
+}
+
+// Crée un profile Zernio (gratuit) et renvoie son ID.
+export async function zernioCreateProfile(name: string): Promise<string> {
+  const res = await fetch(`${ZERNIO_BASE}/profiles`, {
+    method: "POST",
+    headers: zernioHeaders(),
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      (err.error || err.message || `Zernio create profile error: ${res.status}`) +
+        " — vérifie que ta clé API Zernio n'est pas restreinte à un seul profile."
+    );
+  }
+  const data = await res.json().catch(() => null);
+  const id = data?.profile?._id ?? data?.profile?.id;
+  if (!id) throw new Error("Zernio a répondu sans ID de profile.");
+  return id as string;
 }
 
 // Create a post (publish now or schedule)
@@ -391,11 +471,9 @@ export async function zernioCreatePost(params: {
     content: params.content,
     platforms: params.platforms,
   };
-  // Rattache explicitement le post au bon profile Zernio si connu — évite
-  // toute ambiguïté si la clé API a accès à plusieurs profiles.
-  if (process.env.ZERNIO_PROFILE_ID) {
-    body.profileId = process.env.ZERNIO_PROFILE_ID;
-  }
+  // Pas de profileId ici : les comptes cibles peuvent vivre dans des profiles
+  // différents (un profile par compte supplémentaire d'une même plateforme).
+  // Les accountId explicites suffisent à router chaque publication.
   if (params.scheduledFor) {
     body.scheduledFor = params.scheduledFor;
     body.timezone = params.timezone || "UTC";
@@ -592,4 +670,202 @@ export function mapZernioAnalyticsMulti(
     totals.completionRate = totals.completionRate / watchSamples;
   }
   return totals;
+}
+
+// ── Phase 13 : données détaillées par compte ────────────────────────────
+
+export type PostTargetAnalytics = {
+  accountId: string | null; // null si Zernio ne l'a pas renvoyé (ancienne forme)
+  platform: string;
+  platformPostUrl: string | null;
+  thumbnailUrl: string | null;
+  views: number;
+  impressions: number;
+  reach: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  clicks: number;
+  avgWatchTime: number;
+  raw: Record<string, unknown>;
+};
+
+function idOf(v: unknown): string | null {
+  if (typeof v === "string") return v;
+  if (v && typeof v === "object") {
+    const o = v as { _id?: string; id?: string };
+    return o._id ?? o.id ?? null;
+  }
+  return null;
+}
+
+// Stats d'un post, UNE LIGNE PAR COMPTE (platformAnalytics[].accountId,
+// confirmé dans docs.zernio.com/analytics/get-analytics). L'ancienne
+// zernioGetPostAnalytics indexe par nom de plateforme : avec deux TikTok sur
+// le même post, le second écrasait le premier. Celle-ci ne mélange rien.
+export async function zernioGetPostTargetAnalytics(postId: string) {
+  const res = await fetch(`${ZERNIO_BASE}/analytics?postId=${encodeURIComponent(postId)}`, {
+    headers: zernioHeaders(),
+  });
+  // 202 = synchro en cours côté Zernio, 424 = aucune plateforme n'a encore remonté de stats.
+  if (res.status === 202 || res.status === 424) return { pending: true, targets: [] as PostTargetAnalytics[] };
+  if (res.status === 402) throw new Error("Zernio : l'add-on Analytics n'est pas activé sur ce compte.");
+  if (!res.ok) throw new Error(`Zernio analytics error: ${res.status}`);
+
+  const data = await res.json().catch(() => null);
+  if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /analytics).");
+
+  const items: Array<Record<string, unknown>> = Array.isArray(data.platformAnalytics)
+    ? data.platformAnalytics
+    : data.analytics && data.platform
+      ? [{ platform: data.platform, accountId: data.accountId, analytics: data.analytics, platformPostUrl: data.platformPostUrl, thumbnailUrl: data.thumbnailUrl }]
+      : [];
+
+  const targets: PostTargetAnalytics[] = items.map((p) => {
+    const a = (p.analytics || {}) as Record<string, number>;
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    return {
+      accountId: idOf(p.accountId),
+      platform: p.platform as string,
+      platformPostUrl: (p.platformPostUrl as string | undefined) ?? null,
+      thumbnailUrl: (p.thumbnailUrl as string | undefined) ?? null,
+      views: n(a.views) || n(a.impressions),
+      impressions: n(a.impressions),
+      reach: n(a.reach),
+      likes: n(a.likes),
+      comments: n(a.comments),
+      shares: n(a.shares),
+      saves: n(a.saves),
+      clicks: n(a.clicks),
+      avgWatchTime: n(a.igReelsAvgWatchTime),
+      raw: p,
+    };
+  });
+  return { pending: targets.length === 0, targets };
+}
+
+export type AccountHealth = {
+  accountId: string;
+  status: string | null; // healthy | warning | error
+  canPost: boolean | null;
+  canFetchAnalytics: boolean | null;
+  tokenValid: boolean | null;
+  tokenExpiresAt: string | null;
+  needsReconnect: boolean | null;
+  issues: string[];
+};
+
+// GET /v1/accounts/health (champs : status healthy|warning|error, canPost,
+// canFetchAnalytics, tokenValid, tokenExpiresAt, needsReconnect, issues).
+// Tolère camelCase et snake_case, la forme exacte n'ayant pas été testée
+// avec une vraie clé.
+export async function zernioGetAccountsHealth(): Promise<AccountHealth[]> {
+  const res = await fetch(`${ZERNIO_BASE}/accounts/health`, { headers: zernioHeaders() });
+  if (!res.ok) throw new Error(`Zernio accounts health error: ${res.status}`);
+  const data = await res.json().catch(() => null);
+  const list: Array<Record<string, unknown>> = Array.isArray(data?.accounts) ? data.accounts : [];
+  const pick = (o: Record<string, unknown>, a: string, b: string) => o[a] ?? o[b];
+  return list
+    .map((h) => ({
+      accountId: (idOf(pick(h, "accountId", "account_id")) ?? idOf(h._id)) as string,
+      status: (h.status as string | undefined) ?? null,
+      canPost: (pick(h, "canPost", "can_post") as boolean | undefined) ?? null,
+      canFetchAnalytics: (pick(h, "canFetchAnalytics", "can_fetch_analytics") as boolean | undefined) ?? null,
+      tokenValid: (pick(h, "tokenValid", "token_valid") as boolean | undefined) ?? null,
+      tokenExpiresAt: (pick(h, "tokenExpiresAt", "token_expires_at") as string | undefined) ?? null,
+      needsReconnect: (pick(h, "needsReconnect", "needs_reconnect") as boolean | undefined) ?? null,
+      issues: Array.isArray(h.issues) ? (h.issues as string[]) : [],
+    }))
+    .filter((h) => h.accountId);
+}
+
+// ── Phase 14 : inbox (commentaires + DMs) ───────────────────────────────
+
+async function zernioError(res: Response, label: string): Promise<Error> {
+  const err = await res.json().catch(() => ({}));
+  return new Error(err.error || err.message || `${label}: ${res.status}`);
+}
+
+// POST /v1/inbox/comments/{postId} — body { accountId, message, commentId? }
+// (confirmé dans la spec : ReplyToInboxPostRequest). postId accepte l'ID
+// Zernio OU l'ID natif de la plateforme. La clé d'idempotence évite qu'un
+// retry (timeout réseau) poste la réponse deux fois.
+export async function zernioReplyToComment(params: {
+  postId: string;
+  accountId: string;
+  message: string;
+  commentId?: string;
+  idempotencyKey?: string;
+}) {
+  const headers: Record<string, string> = { ...zernioHeaders() };
+  if (params.idempotencyKey) {
+    headers["Idempotency-Key"] = params.idempotencyKey;
+    headers["x-request-id"] = params.idempotencyKey;
+  }
+  const res = await fetch(`${ZERNIO_BASE}/inbox/comments/${encodeURIComponent(params.postId)}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      accountId: params.accountId,
+      message: params.message,
+      ...(params.commentId ? { commentId: params.commentId } : {}),
+    }),
+  });
+  if (!res.ok) throw await zernioError(res, "Zernio reply comment error");
+  return res.json().catch(() => ({}));
+}
+
+// POST /v1/inbox/conversations/{conversationId}/messages — body { accountId, message }
+export async function zernioSendMessage(params: {
+  conversationId: string;
+  accountId: string;
+  message: string;
+}) {
+  const res = await fetch(`${ZERNIO_BASE}/inbox/conversations/${encodeURIComponent(params.conversationId)}/messages`, {
+    method: "POST",
+    headers: zernioHeaders(),
+    body: JSON.stringify({ accountId: params.accountId, message: params.message }),
+  });
+  if (!res.ok) throw await zernioError(res, "Zernio send message error");
+  return res.json().catch(() => ({}));
+}
+
+export type ZernioComment = {
+  id: string;
+  text: string;
+  createdAt: string | null;
+  authorId: string | null;
+  authorName: string | null;
+  authorUsername: string | null;
+  parentId: string | null;
+  raw: Record<string, unknown>;
+};
+
+// GET /v1/inbox/comments/{postId}?accountId=… — filet de sécurité quand le
+// webhook comment.received n'est pas (ou mal) configuré. Les champs sont lus
+// de façon tolérante : la forme exacte n'a pas pu être testée avec une vraie clé.
+export async function zernioGetPostComments(postId: string, accountId: string): Promise<ZernioComment[]> {
+  const res = await fetch(
+    `${ZERNIO_BASE}/inbox/comments/${encodeURIComponent(postId)}?accountId=${encodeURIComponent(accountId)}`,
+    { headers: zernioHeaders() }
+  );
+  if (!res.ok) throw await zernioError(res, "Zernio get comments error");
+  const data = await res.json().catch(() => null);
+  const list: Array<Record<string, unknown>> = Array.isArray(data?.comments) ? data.comments : [];
+  return list
+    .map((c) => {
+      const from = (c.from ?? c.author ?? {}) as Record<string, unknown>;
+      return {
+        id: String(c.id ?? c._id ?? ""),
+        text: String(c.message ?? c.text ?? ""),
+        createdAt: (c.createdTime ?? c.createdAt ?? null) as string | null,
+        authorId: from.id ? String(from.id) : null,
+        authorName: (from.name ?? from.displayName ?? null) as string | null,
+        authorUsername: (from.username ?? null) as string | null,
+        parentId: (c.parentId ?? c.parentCommentId ?? null) as string | null,
+        raw: c,
+      };
+    })
+    .filter((c) => c.id && c.text);
 }

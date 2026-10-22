@@ -21,7 +21,8 @@ export type PushEvent =
   | "publish_success"
   | "account_disconnected"
   | "video_never_sent"
-  | "follower_milestone";
+  | "follower_milestone"
+  | "inbox_approval";
 
 const DEFAULT_PREFERENCES: Record<PushEvent, boolean> = {
   publish_failed: true,
@@ -29,6 +30,7 @@ const DEFAULT_PREFERENCES: Record<PushEvent, boolean> = {
   account_disconnected: true,
   video_never_sent: true,
   follower_milestone: true,
+  inbox_approval: true,
 };
 
 // Envoie une notification push à tous les utilisateurs abonnés (RUSHES est

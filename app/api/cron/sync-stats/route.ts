@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import {
-  zernioGetPostAnalytics,
-  mapZernioAnalyticsMulti,
   zernioGetPost,
   zernioCreatePost,
   zernioListAccounts,
   zernioGetFollowerStats,
 } from "@/lib/zernio";
 import { sendPush } from "@/lib/push";
+import { getOwnerUserId, syncAccounts, syncAccountSnapshot, syncVideoTargets } from "@/lib/sync";
+import { pollRecentComments } from "@/lib/inbox";
+import { localToUtcMs } from "@/lib/publish";
 
 // Synchronise automatiquement les statistiques de toutes les vidéos publiées
 // (tous utilisateurs) ayant un post Zernio lié. Déclenché soit par :
@@ -50,8 +51,9 @@ export async function GET(request: Request) {
     const now = Date.now();
     const overdueNeverSent = (neverSent || []).filter((v) => {
       if (!v.scheduled_date) return false;
-      const iso = `${v.scheduled_date}T${v.scheduled_time || "00:00"}:00`;
-      const t = new Date(iso).getTime();
+      // Heure saisie en heure locale (APP_TIMEZONE) : on la convertit, sinon le
+      // serveur (UTC) la lirait avec une heure de décalage.
+      const t = localToUtcMs(`${v.scheduled_date}T${v.scheduled_time || "00:00"}`);
       return !Number.isNaN(t) && now - t > 0;
     });
 
@@ -60,7 +62,7 @@ export async function GET(request: Request) {
       // toutes les vidéos de ce passage (au lieu d'un appel par vidéo).
       let accountsByPlatform: Record<string, string> = {};
       try {
-        const accounts = await zernioListAccounts(process.env.ZERNIO_PROFILE_ID);
+        const accounts = await zernioListAccounts();
         for (const a of accounts) {
           if (!accountsByPlatform[a.platform]) accountsByPlatform[a.platform] = a._id;
         }
@@ -148,8 +150,9 @@ export async function GET(request: Request) {
     const GRACE_MS = 3 * 60 * 1000;
     const overdue = (planned || []).filter((v) => {
       if (!v.scheduled_date) return false;
-      const iso = `${v.scheduled_date}T${v.scheduled_time || "00:00"}:00`;
-      const t = new Date(iso).getTime();
+      // Heure saisie en heure locale (APP_TIMEZONE) : on la convertit, sinon le
+      // serveur (UTC) la lirait avec une heure de décalage.
+      const t = localToUtcMs(`${v.scheduled_date}T${v.scheduled_time || "00:00"}`);
       return !Number.isNaN(t) && now - t > GRACE_MS;
     });
 
@@ -208,7 +211,7 @@ export async function GET(request: Request) {
   // ── Étape 2 : synchro des stats des vidéos déjà publiées ───────────────
   const { data: videos, error } = await supabase
     .from("videos")
-    .select("id, platform, zernio_post_id, zernio_targets")
+    .select("id, user_id, platform, zernio_post_id, zernio_account_id, zernio_targets")
     .eq("status", "published")
     .not("zernio_post_id", "is", null);
 
@@ -217,38 +220,18 @@ export async function GET(request: Request) {
   let synced = 0;
   const errors: Array<{ id: string; error: string }> = [];
 
+  // Stats par vidéo ET par compte (table post_targets + historique), puis
+  // totaux recalculés sur `videos`. Voir lib/sync.ts.
   for (const video of videos || []) {
     try {
-      const analytics = await zernioGetPostAnalytics(video.zernio_post_id as string);
-      if (Object.keys(analytics.platforms).length === 0) {
-        // Pas encore de données exploitables (synchro en cours côté Zernio,
-        // ou échec sur toutes les plateformes) — on retente au prochain
-        // passage plutôt que d'écraser les stats avec des zéros.
-        continue;
-      }
-      const targetPlatforms: string[] =
-        Array.isArray(video.zernio_targets) && video.zernio_targets.length > 0
-          ? video.zernio_targets.map((t: { platform: string }) => t.platform)
-          : [video.platform as string];
-      const mapped = mapZernioAnalyticsMulti(analytics.platforms, targetPlatforms);
-
-      const { error: updateError } = await supabase
-        .from("videos")
-        .update({
-          views: mapped.views,
-          likes: mapped.likes,
-          comments: mapped.comments,
-          shares: mapped.shares,
-          saves: mapped.saves,
-          new_followers: mapped.newFollowers,
-          avg_watch_time: mapped.avgWatchTime,
-          completion_rate: mapped.completionRate,
-          zernio_synced_at: new Date().toISOString(),
-        })
-        .eq("id", video.id);
-
-      if (updateError) throw new Error(updateError.message);
-      synced += 1;
+      const result = await syncVideoTargets(supabase, video.user_id as string, {
+        id: video.id as string,
+        platform: video.platform as string,
+        zernio_post_id: video.zernio_post_id as string,
+        zernio_account_id: video.zernio_account_id as string | null,
+        zernio_targets: video.zernio_targets,
+      });
+      if (result.synced) synced += 1;
     } catch (e) {
       errors.push({ id: video.id as string, error: (e as Error).message });
     }
@@ -261,13 +244,27 @@ export async function GET(request: Request) {
   // SANS notifier (sinon on spammerait immédiatement avec toute la
   // croissance déjà acquise avant l'activation des notifications).
   let milestonesSent = 0;
+  let accountsSynced = 0;
   const milestoneErrors: Array<{ accountId: string; error: string }> = [];
   {
     try {
-      const accounts = await zernioListAccounts(process.env.ZERNIO_PROFILE_ID);
+      const ownerId = await getOwnerUserId(supabase);
+      // Miroir des comptes + santé (token, permissions) dans zernio_accounts.
+      if (ownerId) {
+        try {
+          accountsSynced = (await syncAccounts(supabase, ownerId)).count;
+        } catch (e) {
+          milestoneErrors.push({ accountId: "*", error: `syncAccounts: ${(e as Error).message}` });
+        }
+      }
+      const accounts = await zernioListAccounts();
       for (const account of accounts) {
         try {
-          const stats = await zernioGetFollowerStats(account._id, account.platform);
+          // Un seul appel Zernio par compte : il sert à la fois au snapshot
+          // quotidien (account_snapshots) et au calcul des paliers ci-dessous.
+          const stats = ownerId
+            ? await syncAccountSnapshot(supabase, ownerId, account)
+            : await zernioGetFollowerStats(account._id, account.platform);
           const currentMilestone = Math.floor(stats.followerCount / 100) * 100;
 
           const { data: existing } = await supabase
@@ -305,8 +302,26 @@ export async function GET(request: Request) {
     }
   }
 
+  // ── Étape 4 : filet de sécurité inbox ─────────────────────────────────
+  // Relève les commentaires récents au cas où le webhook comment.received
+  // n'est pas configuré. Idempotent : les doublons sont ignorés.
+  let inboxNew = 0;
+  const inboxErrors: string[] = [];
+  try {
+    const ownerId = await getOwnerUserId(supabase);
+    if (ownerId) {
+      const r = await pollRecentComments(supabase, ownerId);
+      inboxNew = r.newItems;
+      inboxErrors.push(...r.errors);
+    }
+  } catch (e) {
+    inboxErrors.push((e as Error).message);
+  }
+
   return NextResponse.json({
     ok: true,
+    inboxNew,
+    inboxErrors,
     synced,
     total: videos?.length || 0,
     errors,
@@ -316,5 +331,6 @@ export async function GET(request: Request) {
     autoPublishErrors,
     milestonesSent,
     milestoneErrors,
+    accountsSynced,
   });
 }

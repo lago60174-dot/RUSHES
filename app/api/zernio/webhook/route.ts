@@ -1,7 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { verifyZernioWebhookSignature } from "@/lib/zernio";
 import { sendPush } from "@/lib/push";
+import { getOwnerUserId, markAccountDisconnected, syncAccounts } from "@/lib/sync";
+import { ingestItem, triageItem } from "@/lib/inbox";
 
 // Endpoint appelé par Zernio (pas par le navigateur de l'utilisateur) à
 // chaque changement de statut d'un post : programmé, publié, échoué,
@@ -13,7 +15,8 @@ import { sendPush } from "@/lib/push";
 //   Settings → Webhooks → Add webhook
 //   URL     : https://<ton-domaine>/api/zernio/webhook
 //   Events  : post.scheduled, post.published, post.failed, post.partial,
-//             post.cancelled, account.disconnected
+//             post.cancelled, account.connected, account.disconnected,
+//             comment.received, message.received, message.sent
 //   Secret  : la même valeur que ZERNIO_WEBHOOK_SECRET côté Vercel
 
 // ✅ Vérifiée mot pour mot contre docs.zernio.com (section Webhooks) —
@@ -84,8 +87,26 @@ export async function POST(request: Request) {
   // avant le early-return "pas de post" ci-dessous qui l'ignorerait sinon.
   // ✅ Champs confirmés mot pour mot dans le changelog docs.zernio.com :
   // accountId, profileId, disconnectionType ("intentional" | "unintentional").
+  // account.connected : on rafraîchit le miroir des comptes en base.
+  if (event === "account.connected") {
+    try {
+      const adminDb = createSupabaseAdminClient();
+      const ownerId = await getOwnerUserId(adminDb);
+      if (ownerId) await syncAccounts(adminDb, ownerId);
+    } catch (e) {
+      console.error("[webhook] account.connected sync:", (e as Error).message);
+    }
+    return NextResponse.json({ ok: true });
+  }
+
   if (event === "account.disconnected") {
     const data = (body.data as Record<string, unknown> | undefined) ?? body;
+    const disconnectedId = (data.accountId as string | undefined) ?? ((data.account as { _id?: string } | undefined)?._id);
+    if (disconnectedId) {
+      await markAccountDisconnected(createSupabaseAdminClient(), disconnectedId).catch((e) =>
+        console.error("[webhook] markAccountDisconnected:", (e as Error).message)
+      );
+    }
     const platform = (data.platform as string | undefined) || "un compte";
     const username = (data.username as string | undefined) || (data.displayName as string | undefined) || "";
     const disconnectionType = data.disconnectionType as string | undefined;
@@ -99,6 +120,66 @@ export async function POST(request: Request) {
       url: "/",
     }).catch((e) => console.error("[push] account_disconnected:", e));
 
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── Inbox : commentaires et DMs ───────────────────────────────────────
+  // Réponse 200 immédiate ; l'analyse par l'agent (appel LLM) tourne ensuite
+  // via after() pour ne pas faire expirer le webhook côté Zernio.
+  // Formes confirmées : comment.received → { comment{id,postId,platformPostId,
+  // platform,text,author,createdAt,parentCommentId}, post, account } ;
+  // message.received/sent → { message{id,conversationId,platform,direction,text,
+  // sender,sentAt}, conversation, account }. Lecture tolérante des sous-champs.
+  if (event === "comment.received" || event === "message.received" || event === "message.sent") {
+    const d = ((body.data as Record<string, unknown> | undefined) ?? body) as Record<string, unknown>;
+    const account = (d.account ?? {}) as Record<string, unknown>;
+    const accountId = String(account.id ?? account._id ?? account.accountId ?? "");
+
+    after(async () => {
+      try {
+        const db = createSupabaseAdminClient();
+        const userId = await getOwnerUserId(db);
+        if (!userId || !accountId) return;
+
+        let itemId: string | null = null;
+        if (event === "comment.received") {
+          const c = (d.comment ?? {}) as Record<string, unknown>;
+          const a = (c.author ?? {}) as Record<string, unknown>;
+          if (!c.id || !c.text) return;
+          itemId = await ingestItem(db, {
+            userId, kind: "comment", direction: "incoming", accountId,
+            platform: String(c.platform ?? account.platform ?? ""),
+            externalId: String(c.id),
+            postId: (c.postId as string | null) ?? null,
+            platformPostId: (c.platformPostId as string | null) ?? null,
+            parentExternalId: (c.parentCommentId as string | null) ?? null,
+            authorId: a.id ? String(a.id) : null,
+            authorName: (a.name ?? a.displayName ?? null) as string | null,
+            authorUsername: (a.username ?? null) as string | null,
+            text: String(c.text), receivedAt: (c.createdAt as string | null) ?? null, raw: d,
+          });
+        } else {
+          const m = (d.message ?? {}) as Record<string, unknown>;
+          const conv = (d.conversation ?? {}) as Record<string, unknown>;
+          const snd = (m.sender ?? {}) as Record<string, unknown>;
+          if (!m.id || !m.text) return; // DM non textuel (image, etc.) : rien à répondre
+          itemId = await ingestItem(db, {
+            userId, kind: "dm",
+            direction: event === "message.sent" || m.direction === "outgoing" ? "outgoing" : "incoming",
+            accountId, platform: String(m.platform ?? account.platform ?? ""),
+            externalId: String(m.id),
+            conversationId: String(m.conversationId ?? conv.id ?? "") || null,
+            authorId: snd.id ? String(snd.id) : null,
+            authorName: (snd.name ?? snd.displayName ?? null) as string | null,
+            authorUsername: (snd.username ?? null) as string | null,
+            text: String(m.text), receivedAt: (m.sentAt as string | null) ?? null, raw: d,
+          });
+        }
+        if (itemId) await triageItem(db, userId, itemId);
+      } catch (e) {
+        console.error(`[webhook] ${event}:`, (e as Error).message);
+      }
+    });
     return NextResponse.json({ ok: true });
   }
 

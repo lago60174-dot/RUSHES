@@ -273,7 +273,7 @@ function AddVideoModal({
           <button onClick={onClose} className="text-sm px-4 py-2 rounded-xl" style={{ color: C.textSecondary, border: `1px solid ${C.border}`, background: C.surface }}>Annuler</button>
           <button onClick={handleConfirm} disabled={saving || busy || !title.trim() || readyFiles.length === 0}
             className="text-sm px-5 py-2 rounded-xl font-semibold"
-            style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)`, color: "#fff", opacity: saving || busy || !title.trim() || readyFiles.length === 0 ? 0.6 : 1 }}>
+            style={{ background: `linear-gradient(135deg, ${C.orange}, #C2410C)`, color: "#fff", opacity: saving || busy || !title.trim() || readyFiles.length === 0 ? 0.6 : 1 }}>
             {saving ? "Enregistrement…" : busy ? "Upload en cours…" : readyFiles.length > 1 ? `Ajouter ${readyFiles.length} vidéos` : "Ajouter au calendrier"}
           </button>
         </div>
@@ -366,7 +366,7 @@ export function LibraryView({
         <div className="flex gap-2">
           <button onClick={() => setShowAddModal(true)}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold"
-            style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)`, color: "#fff" }}>
+            style={{ background: `linear-gradient(135deg, ${C.orange}, #C2410C)`, color: "#fff" }}>
             + Ajouter une vidéo
           </button>
           <button onClick={handleRefresh} disabled={refreshing} className="text-xs px-3 py-1.5 rounded-lg font-semibold"

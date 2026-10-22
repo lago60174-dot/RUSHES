@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { C, FONT_DISPLAY } from "@/components/ui/constants";
 
-const DISMISS_KEY = "rushes-install-dismissed-at";
+const DISMISS_KEY = "flare-install-dismissed-at";
 const DISMISS_DAYS = 7;
 
 interface BeforeInstallPromptEvent extends Event {
@@ -69,7 +69,7 @@ export function InstallBanner() {
         setVisible(true);
       }
     };
-    window.addEventListener("rushes:bip-ready", onReady);
+    window.addEventListener("flare:bip-ready", onReady);
 
     // Cas 3 (filet de sécurité redondant) : au cas où le script inline
     // n'aurait pas pu s'exécuter pour une raison quelconque.
@@ -81,7 +81,7 @@ export function InstallBanner() {
     window.addEventListener("beforeinstallprompt", handler);
 
     return () => {
-      window.removeEventListener("rushes:bip-ready", onReady);
+      window.removeEventListener("flare:bip-ready", onReady);
       window.removeEventListener("beforeinstallprompt", handler);
     };
   }, []);
@@ -114,10 +114,10 @@ export function InstallBanner() {
         boxShadow: "0 8px 30px rgba(0,0,0,0.12)",
       }}
     >
-      <img src="/icon-192.png" alt="RUSHES" className="w-10 h-10 rounded-xl shrink-0" />
+      <img src="/icon-192.png" alt="FLARE Studio" className="w-10 h-10 rounded-xl shrink-0" />
       <div className="flex-1 min-w-0">
         <div className="text-sm font-semibold" style={{ color: C.textPrimary }}>
-          Installer RUSHES
+          Installer FLARE Studio
         </div>
         {showIOSInstructions ? (
           <div className="text-xs mt-0.5" style={{ color: C.textSecondary }}>
@@ -133,7 +133,7 @@ export function InstallBanner() {
         <button
           onClick={handleInstall}
           className="text-xs px-3.5 py-2 rounded-xl font-semibold whitespace-nowrap shrink-0"
-          style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)`, color: "#fff" }}
+          style={{ background: `linear-gradient(135deg, ${C.orange}, #C2410C)`, color: "#fff" }}
         >
           Installer
         </button>

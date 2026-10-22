@@ -1,0 +1,9 @@
+[
+  {
+    "AllowedOrigins": ["https://ton-projet.vercel.app", "http://localhost:3000"],
+    "AllowedMethods": ["PUT", "GET", "HEAD"],
+    "AllowedHeaders": ["Content-Type"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]

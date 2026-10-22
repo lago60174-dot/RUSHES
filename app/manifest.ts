@@ -2,16 +2,17 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "RUSHES — Centre de contrôle contenu",
-    short_name: "RUSHES",
+    id: "/",
+    name: "FLARE Studio — Social content studio",
+    short_name: "FLARE",
     description:
       "Planifie, publie et suis tes vidéos sur TikTok, Instagram, YouTube Shorts et Facebook.",
     start_url: "/",
     scope: "/",
     display: "standalone",
     orientation: "portrait",
-    background_color: "#FFFFFF",
-    theme_color: "#FFFFFF",
+    background_color: "#F8F6F2",
+    theme_color: "#EA580C",
     lang: "fr",
     icons: [
       {

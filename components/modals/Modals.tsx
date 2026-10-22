@@ -240,7 +240,7 @@ export function VideoModal({
             <button onClick={onClose} className="text-sm px-4 py-2 rounded-xl" style={{ color: C.textSecondary, border: `1px solid ${C.border}`, background: C.card }}>Annuler</button>
             <button onClick={onSave} disabled={saving || !form.title?.trim()}
               className="text-sm px-5 py-2 rounded-xl font-semibold"
-              style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)`, color: "#fff", opacity: saving || !form.title?.trim() ? 0.6 : 1 }}>
+              style={{ background: `linear-gradient(135deg, ${C.orange}, #C2410C)`, color: "#fff", opacity: saving || !form.title?.trim() ? 0.6 : 1 }}>
               {saveLabels[mode] || "Enregistrer"}
             </button>
           </div>
@@ -256,10 +256,11 @@ export function VideoModal({
 // l'app — les comptes connectés sont partagés au niveau de l'app, pas isolés
 // par utilisateur.
 export function ConnectedAccountsModal({
-  accounts, onClose,
+  accounts, onClose, onChanged,
 }: {
   accounts: ZernioAccount[];
   onClose: () => void;
+  onChanged?: () => void;
 }) {
   const toast = useToast();
   const [connecting, setConnecting] = React.useState<string | null>(null);
@@ -292,11 +293,67 @@ export function ConnectedAccountsModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts]);
 
-  async function handleConnect(platformKey: string) {
-    setConnecting(platformKey);
+  const [disconnecting, setDisconnecting] = React.useState<string | null>(null);
+  const [syncingAll, setSyncingAll] = React.useState(false);
+
+  // Synchro complète à la demande : comptes, santé, abonnés et stats de
+  // toutes les vidéos, enregistrés en base (sans attendre le cron de 6h).
+  async function handleSyncAll() {
+    setSyncingAll(true);
     setError("");
     try {
-      const res = await fetch(`/api/zernio/connect?platform=${platformKey}`);
+      const res = await fetch("/api/zernio/sync-all", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Échec de la synchronisation.");
+      toast.success(
+        "Synchronisation terminée ✓",
+        `${data.accountsSynced} compte(s), ${data.videosSynced}/${data.totalVideos} vidéo(s)` +
+          (data.errors?.length ? ` · ${data.errors.length} erreur(s)` : "")
+      );
+      onChanged?.();
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      toast.error("Échec de la synchronisation", msg);
+    } finally {
+      setSyncingAll(false);
+    }
+  }
+
+  async function handleDisconnect(a: ZernioAccount) {
+    if (!window.confirm(`Déconnecter @${a.username} (${PLATFORMS[a.platform]?.label || a.platform}) ?`)) return;
+    setDisconnecting(a._id);
+    setError("");
+    try {
+      let res = await fetch(`/api/zernio/accounts/${a._id}`, { method: "DELETE" });
+      let data = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        const ok = window.confirm(
+          `${data.plannedCount} publication(s) planifiée(s) ciblent ce compte et ne partiront pas. Déconnecter quand même ?`
+        );
+        if (!ok) return;
+        res = await fetch(`/api/zernio/accounts/${a._id}?force=1`, { method: "DELETE" });
+        data = await res.json().catch(() => ({}));
+      }
+      if (!res.ok) throw new Error(data.error || "Impossible de déconnecter ce compte.");
+      toast.success("Compte déconnecté", `@${a.username}`);
+      onChanged?.();
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      toast.error("Échec de la déconnexion", msg);
+    } finally {
+      setDisconnecting(null);
+    }
+  }
+
+  async function handleConnect(platformKey: string, reconnectAccountId?: string) {
+    setConnecting(reconnectAccountId || platformKey);
+    setError("");
+    try {
+      const qs = new URLSearchParams({ platform: platformKey });
+      if (reconnectAccountId) qs.set("reconnectAccountId", reconnectAccountId);
+      const res = await fetch(`/api/zernio/connect?${qs.toString()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Impossible de démarrer la connexion.");
       window.location.href = data.authUrl;
@@ -317,40 +374,59 @@ export function ConnectedAccountsModal({
             <div className="font-semibold" style={{ color: C.textPrimary }}>Réseaux sociaux</div>
             <div className="text-xs mt-0.5" style={{ color: C.textMuted }}>Comptes connectés à l'app via Zernio.</div>
           </div>
-          <button onClick={onClose} className="text-xl w-8 h-8 flex items-center justify-center rounded-lg" style={{ color: C.textSecondary, background: C.card }}>✕</button>
+          <div className="flex items-center gap-2">
+            <button onClick={handleSyncAll} disabled={syncingAll}
+              className="text-xs px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap"
+              style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}`, opacity: syncingAll ? 0.6 : 1 }}>
+              {syncingAll ? "Synchro…" : "↻ Tout synchroniser"}
+            </button>
+            <button onClick={onClose} className="text-xl w-8 h-8 flex items-center justify-center rounded-lg" style={{ color: C.textSecondary, background: C.card }}>✕</button>
+          </div>
         </div>
 
         <div className="px-6 pb-6 space-y-2">
           {Object.entries(PLATFORMS).map(([key, p]) => {
             const platformAccounts = accountsByPlatform[key] || [];
             return (
-              <div key={key} className="rounded-xl p-3 flex items-center justify-between"
+              <div key={key} className="rounded-xl p-3 flex items-start justify-between gap-3"
                 style={{ background: C.card, border: `1px solid ${platformAccounts.length ? p.color + "60" : C.border}` }}>
-                <div>
+                <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold" style={{ color: p.color }}>{p.label}</div>
                   {platformAccounts.length > 0 ? (
                     <>
-                      <div className="text-xs mt-0.5" style={{ color: C.textSecondary }}>
-                        {platformAccounts.map(a => `@${a.username}`).join(", ")}
-                      </div>
                       {platformAccounts.map((a) => {
                         const s = statsByAccount[a._id];
-                        if (!s || s === "loading") {
-                          return <div key={a._id} className="text-xs mt-1" style={{ color: C.textMuted }}>Chargement des stats…</div>;
-                        }
-                        if (s === "error") {
-                          return <div key={a._id} className="text-xs mt-1" style={{ color: C.coral }}>Stats indisponibles</div>;
-                        }
                         return (
-                          <div key={a._id} className="text-xs mt-1 flex gap-3" style={{ color: C.textPrimary }}>
-                            <span><b>{s.followerCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>abonnés</span></span>
-                            {a.platform === "facebook" || a.platform === "youtube" ? (
-                              <span><b>{(s.pageViews ?? 0).toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>vues (30j)</span></span>
+                          <div key={a._id} className="mt-2 rounded-lg p-2" style={{ background: C.bg, border: `1px solid ${C.border}` }}>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-xs font-semibold" style={{ color: C.textPrimary }}>@{a.username}</div>
+                              <div className="flex gap-1.5">
+                                <button onClick={() => handleConnect(key, a._id)} disabled={connecting === a._id}
+                                  className="text-[11px] px-2 py-1 rounded-md" style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
+                                  {connecting === a._id ? "…" : "Reconnecter"}
+                                </button>
+                                <button onClick={() => handleDisconnect(a)} disabled={disconnecting === a._id}
+                                  className="text-[11px] px-2 py-1 rounded-md" style={{ background: C.coralBg, color: C.coral, opacity: disconnecting === a._id ? 0.6 : 1 }}>
+                                  {disconnecting === a._id ? "…" : "Déconnecter"}
+                                </button>
+                              </div>
+                            </div>
+                            {!s || s === "loading" ? (
+                              <div className="text-xs mt-1" style={{ color: C.textMuted }}>Chargement des stats…</div>
+                            ) : s === "error" ? (
+                              <div className="text-xs mt-1" style={{ color: C.coral }}>Stats indisponibles</div>
                             ) : (
-                              <>
-                                <span><b>{s.likesCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>likes</span></span>
-                                <span><b>{s.videoCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>vidéos</span></span>
-                              </>
+                              <div className="text-xs mt-1 flex gap-3" style={{ color: C.textPrimary }}>
+                                <span><b>{s.followerCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>abonnés</span></span>
+                                {a.platform === "facebook" || a.platform === "youtube" ? (
+                                  <span><b>{(s.pageViews ?? 0).toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>vues (30j)</span></span>
+                                ) : (
+                                  <>
+                                    <span><b>{s.likesCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>likes</span></span>
+                                    <span><b>{s.videoCount.toLocaleString("fr-FR")}</b> <span style={{ color: C.textMuted }}>vidéos</span></span>
+                                  </>
+                                )}
+                              </div>
                             )}
                           </div>
                         );
@@ -363,7 +439,7 @@ export function ConnectedAccountsModal({
                 <button onClick={() => handleConnect(key)} disabled={connecting === key}
                   className="text-xs px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap"
                   style={{
-                    background: platformAccounts.length ? C.card : `linear-gradient(135deg, ${C.green}, #15803D)`,
+                    background: platformAccounts.length ? C.card : `linear-gradient(135deg, ${C.orange}, #C2410C)`,
                     color: platformAccounts.length ? C.textSecondary : "#fff",
                     border: platformAccounts.length ? `1px solid ${C.border}` : "none",
                     opacity: connecting === key ? 0.6 : 1,
@@ -399,9 +475,10 @@ export function ZernioPublishModal({
   }, [accounts]);
 
   // Sélection multi-plateforme : platform -> accountId (vide = décoché)
-  const [selected, setSelected] = React.useState<Record<string, string>>(() => {
+  // platform -> liste d'accountId cochés (plusieurs comptes possibles par plateforme)
+  const [selected, setSelected] = React.useState<Record<string, string[]>>(() => {
     const firstForVideoPlatform = accountsByPlatform[video.platform]?.[0]?._id;
-    return firstForVideoPlatform ? { [video.platform]: firstForVideoPlatform } : {};
+    return firstForVideoPlatform ? { [video.platform]: [firstForVideoPlatform] } : {};
   });
 
   const [caption, setCaption] = React.useState([video.title, video.hashtags].filter(Boolean).join("\n\n"));
@@ -426,7 +503,7 @@ export function ZernioPublishModal({
   const [tiktokStatsLoading, setTiktokStatsLoading] = React.useState(false);
   const [tiktokStatsError, setTiktokStatsError] = React.useState("");
 
-  const tiktokAccountId = selected.tiktok;
+  const tiktokAccountId = selected.tiktok?.[0];
   React.useEffect(() => {
     if (!tiktokAccountId) { setTiktokStats(null); setTiktokStatsError(""); return; }
     setTiktokStatsLoading(true);
@@ -453,7 +530,7 @@ export function ZernioPublishModal({
   const [facebookStatsLoading, setFacebookStatsLoading] = React.useState(false);
   const [facebookStatsError, setFacebookStatsError] = React.useState("");
 
-  const facebookAccountId = selected.facebook;
+  const facebookAccountId = selected.facebook?.[0];
   React.useEffect(() => {
     if (!facebookAccountId) { setFacebookStats(null); setFacebookStatsError(""); return; }
     setFacebookStatsLoading(true);
@@ -483,7 +560,7 @@ export function ZernioPublishModal({
   const [youtubeStatsLoading, setYoutubeStatsLoading] = React.useState(false);
   const [youtubeStatsError, setYoutubeStatsError] = React.useState("");
 
-  const youtubeAccountId = selected.youtube;
+  const youtubeAccountId = selected.youtube?.[0];
   React.useEffect(() => {
     if (!youtubeAccountId) { setYoutubeStats(null); setYoutubeStatsError(""); return; }
     setYoutubeStatsLoading(true);
@@ -531,18 +608,27 @@ export function ZernioPublishModal({
     setSelected((prev) => {
       const next = { ...prev };
       if (next[platformKey]) delete next[platformKey];
-      else next[platformKey] = accountsByPlatform[platformKey]?.[0]?._id || "";
+      else {
+        const first = accountsByPlatform[platformKey]?.[0]?._id;
+        if (first) next[platformKey] = [first];
+      }
       return next;
     });
   }
 
-  function setAccountForPlatform(platformKey: string, accountId: string) {
-    setSelected((prev) => ({ ...prev, [platformKey]: accountId }));
+  function toggleAccount(platformKey: string, accountId: string) {
+    setSelected((prev) => {
+      const current = prev[platformKey] || [];
+      const nextList = current.includes(accountId) ? current.filter((id) => id !== accountId) : [...current, accountId];
+      const next = { ...prev };
+      if (nextList.length === 0) delete next[platformKey];
+      else next[platformKey] = nextList;
+      return next;
+    });
   }
 
   const targets = Object.entries(selected)
-    .filter(([, accountId]) => accountId)
-    .map(([platform, accountId]) => ({ platform, accountId }));
+    .flatMap(([platform, accountIds]) => accountIds.map((accountId) => ({ platform, accountId })));
 
   async function handleSubmit() {
     if (targets.length === 0 || !caption.trim()) return;
@@ -610,10 +696,15 @@ export function ZernioPublishModal({
                           {platformAccounts.length === 0 && <span className="text-xs" style={{ color: C.textMuted }}>(non connecté)</span>}
                         </label>
                         {checked && platformAccounts.length > 1 && (
-                          <select value={selected[key]} onChange={(e) => setAccountForPlatform(key, e.target.value)}
-                            className="mt-2" style={{ ...inputStyle, padding: "6px 10px", fontSize: "0.8rem" }}>
-                            {platformAccounts.map((a) => <option key={a._id} value={a._id}>@{a.username} · {a.name}</option>)}
-                          </select>
+                          <div className="mt-2 space-y-1">
+                            {platformAccounts.map((a) => (
+                              <label key={a._id} className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: C.textSecondary }}>
+                                <input type="checkbox" checked={(selected[key] || []).includes(a._id)}
+                                  onChange={() => toggleAccount(key, a._id)} style={{ accentColor: p.color }} />
+                                @{a.username} · {a.name}
+                              </label>
+                            ))}
+                          </div>
                         )}
                         {checked && key === "tiktok" && (
                           <div className="mt-2 rounded-lg p-2.5" style={{ background: C.bg, border: `1px solid ${C.border}` }}>
@@ -728,7 +819,7 @@ export function ZernioPublishModal({
           {accounts.length > 0 && (
             <button onClick={handleSubmit} disabled={loading || uploading || !caption.trim() || !videoUrl.trim() || targets.length === 0}
               className="text-sm px-5 py-2 rounded-xl font-semibold"
-              style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)`, color: "#fff", opacity: loading || uploading || !caption.trim() || !videoUrl.trim() || targets.length === 0 ? 0.6 : 1 }}>
+              style={{ background: `linear-gradient(135deg, ${C.orange}, #C2410C)`, color: "#fff", opacity: loading || uploading || !caption.trim() || !videoUrl.trim() || targets.length === 0 ? 0.6 : 1 }}>
               {loading ? "Envoi…" : scheduleMode ? "Programmer" : `Publier sur ${targets.length || ""} réseau${targets.length > 1 ? "x" : ""}`}
             </button>
           )}

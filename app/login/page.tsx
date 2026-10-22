@@ -1,75 +1,35 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { C } from "@/components/ui/constants";
 
-type Mode = "login" | "signup";
-
 export default function LoginPage() {
-  const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [successMsg, setSuccessMsg] = useState("");
 
   const supabase = createSupabaseBrowserClient();
 
-  function switchMode(m: Mode) {
-    setMode(m);
-    setError("");
-    setSuccessMsg("");
-    setPassword("");
-    setConfirmPassword("");
-  }
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("error") === "forbidden") {
+      setError("Accès refusé : cette application est privée.");
+    }
+  }, []);
 
   async function handleSubmit() {
     setError("");
-    setSuccessMsg("");
-
     if (!email.trim() || !password) return;
-
-    if (mode === "signup") {
-      if (password.length < 6) {
-        setError("Le mot de passe doit contenir au moins 6 caractères.");
-        return;
-      }
-      if (password !== confirmPassword) {
-        setError("Les mots de passe ne correspondent pas.");
-        return;
-      }
-    }
-
     setLoading(true);
-
-    if (mode === "login") {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-      setLoading(false);
-      if (error) {
-        setError("Email ou mot de passe incorrect.");
-      } else {
-        window.location.href = "/";
-      }
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+    setLoading(false);
+    if (error) {
+      setError("Email ou mot de passe incorrect.");
     } else {
-      const { error } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
-      });
-      setLoading(false);
-      if (error) {
-        if (error.message.includes("already registered")) {
-          setError("Cet email est déjà utilisé. Connecte-toi à la place.");
-        } else {
-          setError(error.message);
-        }
-      } else {
-        setSuccessMsg("Compte créé ! Tu peux maintenant te connecter.");
-        switchMode("login");
-      }
+      window.location.href = "/";
     }
   }
 
@@ -95,7 +55,7 @@ export default function LoginPage() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontFamily: "'Space Grotesk', sans-serif",
+        fontFamily: "'Plus Jakarta Sans', sans-serif",
       }}
     >
       <div
@@ -115,7 +75,7 @@ export default function LoginPage() {
               width: 44,
               height: 44,
               borderRadius: 14,
-              background: `linear-gradient(135deg, ${C.green}, #15803D)`,
+              background: `linear-gradient(135deg, ${C.orange}, #C2410C)`,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -125,43 +85,11 @@ export default function LoginPage() {
           </div>
           <div>
             <div style={{ color: C.textPrimary, fontWeight: 700, fontSize: "1rem", letterSpacing: "0.1em" }}>
-              RUSHES
+              FLARE
             </div>
-            <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>Studio contenu</div>
+            <div style={{ color: C.textMuted, fontSize: "0.75rem" }}>Social content studio</div>
           </div>
         </div>
-
-        {/* Tabs */}
-        <div style={{ display: "flex", background: C.card, borderRadius: 12, padding: 4, marginBottom: 28 }}>
-          {(["login", "signup"] as Mode[]).map((m) => (
-            <button
-              key={m}
-              onClick={() => switchMode(m)}
-              style={{
-                flex: 1,
-                padding: "9px 0",
-                borderRadius: 9,
-                border: "none",
-                cursor: "pointer",
-                fontFamily: "inherit",
-                fontWeight: 600,
-                fontSize: "0.85rem",
-                transition: "all 0.15s",
-                background: mode === m ? `linear-gradient(135deg, ${C.green}, #15803D)` : "transparent",
-                color: mode === m ? "#fff" : C.textSecondary,
-              }}
-            >
-              {m === "login" ? "Connexion" : "Inscription"}
-            </button>
-          ))}
-        </div>
-
-        {/* Success */}
-        {successMsg && (
-          <div style={{ background: "#064E3B", border: "1px solid #059669", borderRadius: 10, padding: "10px 14px", marginBottom: 20, color: C.success, fontSize: "0.82rem", lineHeight: 1.5 }}>
-            {successMsg}
-          </div>
-        )}
 
         {/* Error */}
         {error && (
@@ -190,27 +118,10 @@ export default function LoginPage() {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && mode === "login") handleSubmit(); }}
-          placeholder={mode === "signup" ? "Minimum 6 caractères" : "••••••••"}
-          style={{ ...inputStyle, marginBottom: mode === "signup" ? 16 : 24 }}
+          onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
+          placeholder="••••••••"
+          style={{ ...inputStyle, marginBottom: 24 }}
         />
-
-        {/* Confirm password — inscription uniquement */}
-        {mode === "signup" && (
-          <>
-            <label style={{ display: "block", color: C.textMuted, fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8, fontFamily: "'IBM Plex Mono', monospace" }}>
-              Confirmer le mot de passe
-            </label>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-              placeholder="••••••••"
-              style={{ ...inputStyle, marginBottom: 24 }}
-            />
-          </>
-        )}
 
         {/* Submit */}
         <button
@@ -218,7 +129,7 @@ export default function LoginPage() {
           disabled={loading || !email.trim() || !password}
           style={{
             width: "100%",
-            background: `linear-gradient(135deg, ${C.green}, #15803D)`,
+            background: `linear-gradient(135deg, ${C.orange}, #C2410C)`,
             color: "#fff",
             border: "none",
             borderRadius: 12,
@@ -230,7 +141,7 @@ export default function LoginPage() {
             fontFamily: "inherit",
           }}
         >
-          {loading ? "Chargement…" : mode === "login" ? "Se connecter →" : "Créer mon compte →"}
+          {loading ? "Chargement…" : "Se connecter →"}
         </button>
       </div>
     </div>

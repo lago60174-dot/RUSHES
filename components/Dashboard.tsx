@@ -11,6 +11,7 @@ import { VideoModal, ZernioPublishModal, ConnectedAccountsModal } from "./modals
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 import { useToast } from "./ui/Toast";
 import { PushToggle } from "./pwa/PushToggle";
+import { InboxModal } from "./modals/InboxModal";
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function todayStr() { return new Date().toISOString().slice(0, 10); }
@@ -52,6 +53,17 @@ export default function Dashboard() {
   const [publishModal, setPublishModal] = useState<Video | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [accountsModalOpen, setAccountsModalOpen] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [inboxPending, setInboxPending] = useState(0);
+  // Pastille « à valider » : rafraîchie au chargement puis toutes les 2 min.
+  useEffect(() => {
+    let stop = false;
+    const tick = () => fetch("/api/inbox?view=pending").then((r) => r.json())
+      .then((d) => { if (!stop && typeof d.pendingCount === "number") setInboxPending(d.pendingCount); }).catch(() => {});
+    tick();
+    const t = setInterval(tick, 120_000);
+    return () => { stop = true; clearInterval(t); };
+  }, []);
 
   function refreshZernioAccounts() {
     fetch("/api/zernio/accounts").then(r => r.json())
@@ -380,19 +392,19 @@ export default function Dashboard() {
         ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 4px; }
       `}</style>
 
-      <div className="flex min-h-screen">
+      <div className="flare-app flex min-h-screen">
         {/* Sidebar */}
-        <aside className="hidden lg:flex flex-col w-60 shrink-0 sticky top-0 h-screen"
+        <aside className="flare-sidebar hidden lg:flex flex-col w-64 shrink-0 sticky top-0 h-screen"
           style={{ background: C.bgAlt, borderRight: `1px solid ${C.border}` }}>
           <div className="p-6 pb-8">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-                style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)` }}>
-                <span style={{ color: "#fff", fontSize: "1rem", fontWeight: 900, fontFamily: FONT_DISPLAY }}>R</span>
+                style={{ background: `linear-gradient(135deg, ${C.orange}, #C2410C)` }}>
+                <span style={{ color: "#fff", fontSize: "1rem", fontWeight: 900, fontFamily: FONT_DISPLAY }}>F</span>
               </div>
               <div>
-                <div className="font-bold tracking-wider text-sm" style={{ color: C.textPrimary, letterSpacing: "0.1em" }}>RUSHES</div>
-                <div className="text-xs" style={{ color: C.textMuted }}>Studio contenu</div>
+                <div className="font-bold tracking-wider text-sm" style={{ color: C.textPrimary, letterSpacing: "0.1em" }}>FLARE</div>
+                <div className="text-xs" style={{ color: C.textMuted }}>Social content studio</div>
               </div>
             </div>
           </div>
@@ -402,9 +414,9 @@ export default function Dashboard() {
               <button key={t.key} onClick={() => setActiveTab(t.key)}
                 className="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all"
                 style={{
-                  background: activeTab === t.key ? C.greenBg : "transparent",
-                  color: activeTab === t.key ? C.greenLight : C.textSecondary,
-                  border: `1px solid ${activeTab === t.key ? C.green + "40" : "transparent"}`,
+                  background: activeTab === t.key ? C.orangeBg : "transparent",
+                  color: activeTab === t.key ? C.orangeLight : C.textSecondary,
+                  border: `1px solid ${activeTab === t.key ? C.orange + "40" : "transparent"}`,
                 }}>
                 <span style={{ fontSize: "1rem" }}>{t.icon}</span>
                 {t.label}
@@ -414,6 +426,11 @@ export default function Dashboard() {
 
           <div className="p-4 pb-6 space-y-2">
             <PushToggle />
+            <button onClick={() => setInboxOpen(true)}
+              className="w-full py-2.5 rounded-xl text-sm font-medium transition-all"
+              style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
+              💬 Inbox{inboxPending > 0 ? ` (${inboxPending})` : ""}
+            </button>
             <button onClick={() => setAccountsModalOpen(true)}
               className="w-full py-2.5 rounded-xl text-sm font-medium transition-all"
               style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
@@ -421,7 +438,7 @@ export default function Dashboard() {
             </button>
             <button onClick={() => { setForm(emptyForm()); setModalMode("add"); }}
               className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all"
-              style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)`, color: "#fff" }}>
+              style={{ background: `linear-gradient(135deg, ${C.orange}, #C2410C)`, color: "#fff" }}>
               + Ajouter une vidéo
             </button>
             <button onClick={handleLogout}
@@ -433,18 +450,27 @@ export default function Dashboard() {
         </aside>
 
         {/* Main */}
-        <main className="flex-1 min-w-0">
+        <main className="flare-main flex-1 min-w-0">
           {/* Mobile header */}
           <div className="lg:hidden flex items-center justify-between p-4 sticky top-0 z-10"
             style={{ background: C.bg + "F0", backdropFilter: "blur(12px)", borderBottom: `1px solid ${C.border}` }}>
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-xl flex items-center justify-center"
-                style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)` }}>
-                <span style={{ color: "#fff", fontSize: "0.85rem", fontWeight: 900 }}>R</span>
+                style={{ background: `linear-gradient(135deg, ${C.orange}, #C2410C)` }}>
+                <span style={{ color: "#fff", fontSize: "0.85rem", fontWeight: 900 }}>F</span>
               </div>
-              <span className="font-bold text-sm tracking-wider" style={{ color: C.textPrimary }}>RUSHES</span>
+              <span className="font-bold text-sm tracking-wider" style={{ color: C.textPrimary }}>FLARE</span>
             </div>
             <div className="flex items-center gap-2">
+              <button onClick={() => setInboxOpen(true)} aria-label="Inbox"
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-sm relative"
+                style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
+                💬
+                {inboxPending > 0 && (
+                  <span className="absolute -top-1 -right-1 text-[10px] font-bold rounded-full px-1 min-w-[16px] text-center"
+                    style={{ background: C.coral, color: "#fff" }}>{inboxPending}</span>
+                )}
+              </button>
               <button onClick={() => setAccountsModalOpen(true)} aria-label="Réseaux sociaux"
                 className="w-8 h-8 flex items-center justify-center rounded-lg text-sm"
                 style={{ background: C.card, color: C.textSecondary, border: `1px solid ${C.border}` }}>
@@ -452,7 +478,7 @@ export default function Dashboard() {
               </button>
               <button onClick={() => { setForm(emptyForm()); setModalMode("add"); }}
                 className="text-xs px-3 py-1.5 rounded-lg font-semibold"
-                style={{ background: `linear-gradient(135deg, ${C.green}, #15803D)`, color: "#fff" }}>
+                style={{ background: `linear-gradient(135deg, ${C.orange}, #C2410C)`, color: "#fff" }}>
                 + Ajouter
               </button>
               <button onClick={handleLogout} aria-label="Déconnexion"
@@ -464,10 +490,10 @@ export default function Dashboard() {
           </div>
 
           {/* Content */}
-          <div className="p-6 pb-24 lg:pb-6">
-            <div className="max-w-5xl">
-              <div className="mb-7">
-                <h1 className="text-2xl font-bold" style={{ color: C.textPrimary }}>
+          <div className="flare-content p-6 pb-24 lg:pb-8">
+            <div className="max-w-7xl">
+              <div className="flare-page-heading mb-7">
+                <h1 className="text-2xl font-bold tracking-tight" style={{ color: C.textPrimary }}>
                   {TABS.find(t => t.key === activeTab)?.icon}{" "}
                   {TABS.find(t => t.key === activeTab)?.label}
                 </h1>
@@ -512,7 +538,7 @@ export default function Dashboard() {
         {TABS.map(t => (
           <button key={t.key} onClick={() => setActiveTab(t.key)}
             className="flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-2 px-0.5"
-            style={{ color: activeTab === t.key ? C.greenLight : C.textMuted }}>
+            style={{ color: activeTab === t.key ? C.orangeLight : C.textMuted }}>
             <span style={{ fontSize: "1.15rem", lineHeight: 1 }}>{t.icon}</span>
             <span className="truncate w-full text-center" style={{ fontSize: "0.58rem", fontWeight: activeTab === t.key ? 700 : 500 }}>
               {BOTTOM_NAV_LABELS[t.key] || t.label}
@@ -532,8 +558,13 @@ export default function Dashboard() {
           }} />
       )}
 
+      {inboxOpen && (
+        <InboxModal onChanged={setInboxPending} onClose={() => setInboxOpen(false)} />
+      )}
+
       {accountsModalOpen && (
         <ConnectedAccountsModal accounts={zernioAccounts}
+          onChanged={refreshZernioAccounts}
           onClose={() => { setAccountsModalOpen(false); refreshZernioAccounts(); }} />
       )}
 

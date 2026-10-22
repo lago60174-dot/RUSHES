@@ -8,10 +8,10 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    // Tous les comptes connectés à l'app (une seule clé API Zernio,
-    // pas d'isolation par utilisateur). Filtré par ZERNIO_PROFILE_ID si
-    // renseigné pour ne montrer que les comptes du bon profile Zernio.
-    const accounts = await zernioListAccounts(process.env.ZERNIO_PROFILE_ID);
+    // Tous les comptes de tous les profiles : un profile par compte
+    // supplémentaire d'une même plateforme (règle Zernio : 1 compte par
+    // plateforme et par profile).
+    const accounts = await zernioListAccounts();
     return NextResponse.json(accounts);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

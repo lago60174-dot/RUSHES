@@ -124,7 +124,7 @@ export function AIAnalysisView({
             disabled={loading}
             className="text-sm px-5 py-2.5 rounded-xl font-semibold transition-all"
             style={{
-              background: loading ? C.greenBg : `linear-gradient(135deg, ${C.green}, #15803D)`,
+              background: loading ? C.greenBg : `linear-gradient(135deg, ${C.orange}, #C2410C)`,
               color: C.textPrimary,
               opacity: loading ? 0.7 : 1,
               border: `1px solid ${C.green}60`,

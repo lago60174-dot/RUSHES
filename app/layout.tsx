@@ -5,8 +5,8 @@ import { PWARegister } from "@/components/pwa/PWARegister";
 import { InstallBanner } from "@/components/pwa/InstallBanner";
 
 export const metadata: Metadata = {
-  title: "RUSHES",
-  description: "Centre de contrôle contenu",
+  title: "FLARE Studio",
+  description: "Planifie, publie et analyse tes contenus sociaux depuis un studio unique.",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
@@ -18,13 +18,13 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    statusBarStyle: "black-translucent",
-    title: "RUSHES",
+    statusBarStyle: "default", // fond clair : texte sombre dans la barre d'état iOS
+    title: "FLARE Studio",
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#FFFFFF",
+  themeColor: "#EA580C",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -48,7 +48,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               window.addEventListener("beforeinstallprompt", function (e) {
                 e.preventDefault();
                 window.__deferredInstallPrompt = e;
-                window.dispatchEvent(new Event("rushes:bip-ready"));
+                window.dispatchEvent(new Event("flare:bip-ready"));
               });
             `,
           }}
@@ -56,11 +56,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+          href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
           rel="stylesheet"
         />
       </head>
-      <body style={{ margin: 0, background: "#FFFFFF" }}>
+      <body style={{ margin: 0, background: "#F8F6F2" }}>
         <PWARegister />
         <InstallBanner />
         <ToastProvider>{children}</ToastProvider>

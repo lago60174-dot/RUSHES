@@ -1,7 +1,7 @@
-# RUSHES — Guide de déploiement
+# FLARE Studio — Guide de déploiement
 
-Application personnelle de suivi de contenu vidéo (TikTok, Instagram, YouTube Shorts, Facebook).  
-Stack : Next.js 14 · Supabase · Vercel (déploiement gratuit)
+Studio personnel de planification, publication et analyse de contenu social (TikTok, Instagram, YouTube Shorts, Facebook).  
+Stack : Next.js 16 · Supabase · Vercel (déploiement gratuit)
 
 ---
 
@@ -132,8 +132,125 @@ openssl rand -hex 32
 ### Étape B — Secrets GitHub
 Dans ton repo GitHub, va dans **Settings > Secrets and variables > Actions**
 et ajoute :
-- `RUSHES_APP_URL` = l'URL de ton app déployée (ex: `https://rushes-xyz.vercel.app`)
+- `FLARE_APP_URL` = l'URL de ton app déployée (ex: `https://rushes-xyz.vercel.app`)
 - `CRON_SECRET` = la même valeur que sur Vercel
 
 Le workflow s'exécute automatiquement toutes les 6h, et tu peux aussi le
 lancer manuellement depuis l'onglet **Actions** du repo (bouton "Run workflow").
+
+---
+
+## Phase 11 — Stockage Cloudflare R2
+
+Les vidéos uploadées depuis l'app vont maintenant sur Cloudflare R2 (si les variables `R2_*` sont renseignées). Sans ces variables, l'app continue d'utiliser le presign Zernio : rien ne casse pendant la migration.
+
+1. **Cloudflare > R2 > Create bucket** (ex: `rushes-media`).
+2. **Rendre le bucket lisible publiquement** : *Settings > Public access* — soit un *Custom domain* (recommandé), soit l'URL `r2.dev`. Zernio doit pouvoir télécharger la vidéo via cette URL pour publier.
+3. **CORS** : *Settings > CORS policy* → colle le contenu de `cloudflare-r2-cors.json` (remplace l'URL Vercel par la tienne). Sans ça, l'upload depuis le navigateur échoue.
+4. **API token** : *R2 > Manage API tokens > Create* avec le droit *Object Read & Write* sur ce bucket. Note `Access Key ID` et `Secret Access Key`. L'`Account ID` est affiché sur la page R2.
+5. Ajoute dans Vercel (et `.env.local`) : `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL`.
+6. Exécute `supabase/phase11.sql` dans le SQL Editor (table `media_assets`).
+7. `npm install` puis redéploie.
+
+---
+
+## Phase 12 — App privée (toi seul)
+
+Trois verrous empilés, pour qu'il n'existe aucune porte d'entrée pour quelqu'un d'autre :
+
+1. **Supabase** : *Authentication > Sign In / Providers > Email* → désactive **« Allow new users to sign up »**. Crée ton compte à la main dans *Authentication > Users > Add user* (coche *Auto Confirm*).
+2. **Base** : remplace `ton@email.com` dans `supabase/phase12.sql` par ton email, puis exécute-le. Un trigger refuse alors toute création de compte autre que le tien, même en appelant l'API directement.
+3. **App** : ajoute `OWNER_EMAIL=ton@email.com` dans Vercel. Le proxy coupe toute session dont l'email diffère. ⚠️ Sans cette variable, **personne** ne peut entrer (fail-closed) : ajoute-la avant de déployer. L'onglet « Inscription » a été retiré de la page de login.
+
+## Plusieurs comptes par réseau (Zernio)
+
+Zernio n'autorise **qu'un compte par plateforme et par profile** : reconnecter TikTok sur un profile qui a déjà un TikTok **remplace** ce TikTok. FLARE crée donc automatiquement un profile Zernio par compte supplémentaire (les profiles sont gratuits ; chaque compte connecté est facturé par Zernio selon ton plan).
+
+- **+ Ajouter** : connecte un nouveau compte sans jamais écraser les existants.
+- **Reconnecter** : renouvelle le token d'un compte précis, dans son propre profile.
+- **Déconnecter** : supprime le compte côté Zernio ; si des publications planifiées le ciblent, une confirmation indique combien ne partiront pas.
+- Ta clé API Zernio doit avoir accès à **tous** les profiles (pas de clé restreinte à un seul profile), sinon la création de profile échoue.
+- Le modal de publication permet de cocher **plusieurs comptes d'une même plateforme** en une seule publication.
+
+---
+
+## Phase 13 — Données Zernio stockées en base
+
+Exécute `supabase/phase13.sql` dans le SQL Editor. Quatre tables (lecture seule côté navigateur, écriture côté serveur) :
+
+| Table | Contenu |
+|---|---|
+| `zernio_accounts` | Chaque compte connecté : plateforme, @, profil, abonnés, **santé** (token valide, expiration, `needs_reconnect`, problèmes), connecté/déconnecté |
+| `account_snapshots` | Historique quotidien par compte : abonnés, abonnements, likes, vidéos, vues de page, abonnés gagnés/perdus |
+| `post_targets` | Stats de chaque vidéo **par compte** (vues, impressions, portée, likes, commentaires, partages, enregistrements, clics, lien du post, miniature, réponse Zernio brute) |
+| `post_target_history` | Évolution dans le temps de ces stats (une ligne seulement quand un chiffre change) |
+
+**Quand ça se remplit** : le cron (toutes les 6h) ; le bouton **↻ Tout synchroniser** (modal « Réseaux sociaux ») ; et les webhooks `account.connected` / `account.disconnected`. Pense à **ajouter l'évènement `account.connected`** au webhook dans le dashboard Zernio.
+
+- Les totaux affichés sur chaque vidéo restent dans `videos` ; ils sont maintenant la **somme des comptes réellement ciblés** (corrige l'écrasement quand 2 comptes d'une même plateforme publient la même vidéo).
+- Zernio ne remonte pas les abonnés gagnés par post, ni le taux de complétion (sauf temps de visionnage moyen sur Instagram Reels) : ces champs restent à 0, ce n'est pas un bug.
+- L'add-on **Analytics** de Zernio doit être actif, sinon les stats de posts renvoient une erreur 402.
+
+---
+
+## Phase 14 — Inbox : commentaires, DMs et agent de réponse
+
+Exécute `supabase/phase14.sql`, puis dans le dashboard Zernio (*Settings → Webhooks*) **ajoute les évènements** `comment.received`, `message.received` et `message.sent` au webhook existant. Définis `ANTHROPIC_API_KEY` (ou `MISTRAL_API_KEY`) sur Vercel pour que l'agent puisse rédiger.
+
+**Comment ça marche** : chaque commentaire/DM reçu est enregistré (`inbox_items`), puis l'agent le classe :
+- **simple** (compliment, merci, emojis) → l'agent **répond seul** ;
+- **sensible** (prix, collab, plainte, santé, légal…) → **brouillon à valider** (💬 Inbox, avec pastille + notification push) ;
+- **spam** → ignoré.
+
+**Garde-fous appliqués par le code, pas seulement par le LLM** : mots sensibles (prix, collab, argent, santé, légal, coordonnées…) forcent la validation même si le LLM dit « simple » ; une réponse contenant un lien, une @mention ou un numéro n'est jamais envoyée seule ; confiance < 0,8 → validation ; plafond de 20 réponses auto par heure (réglable) ; verrou anti double-envoi + clé d'idempotence ; l'agent ne répond jamais à ses propres réponses ni à ton propre compte ; le texte reçu est traité comme une donnée (anti prompt-injection). Les réglages (agent actif, réponse auto) sont dans le modal Inbox.
+
+### Plateformes — ce qui est réellement supporté
+- **Commentaires** : Instagram, Facebook, YouTube, Threads, LinkedIn, Bluesky, Reddit, **TikTok**.
+- **DMs** : Instagram, Facebook, Telegram, WhatsApp, X, **TikTok**. Pas de DMs sur YouTube ni Threads.
+- **TikTok** : depuis septembre 2026, Zernio passe par l'**API Business de TikTok**. Les commentaires et DMs ne marchent que pour les comptes connectés **après le 10 septembre** : **reconnecte** tes comptes TikTok plus anciens (bouton « Reconnecter »). Règles TikTok pour les DMs : compte Business hors EEE/UK/Suisse, on ne peut répondre qu'à quelqu'un qui a écrit en premier, 10 messages max dans les 48 h suivant son dernier message. (La page `docs.zernio.com/platforms/tiktok` est restée sur l'ancien « non supporté » : l'annonce de septembre fait foi.)
+- Les **DMs n'arrivent que par webhook** ; pour les commentaires, le cron (6 h) relève en plus les 14 derniers jours si un webhook a été manqué.
+
+---
+
+## Phase 15 — Bot Telegram + agent
+
+Tu écris au bot, il agit sur tout le projet : publier ou programmer des vidéos, légendes et hashtags, réponses aux commentaires et DMs, stats et recommandations, déconnexion d'un compte.
+
+### Installation (une seule fois)
+1. **Révoque le token si tu l'as partagé quelque part** : @BotFather → `/revoke` → ton bot → utilise le nouveau token.
+2. Exécute `supabase/phase15.sql`.
+3. Variables Vercel : `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` (long, aléatoire, lettres/chiffres/`_`/`-` uniquement), `NEXT_PUBLIC_SITE_URL` (ex. `https://ton-projet.vercel.app`), `ANTHROPIC_API_KEY`, `R2_BUCKET=mymedia` (+ les autres `R2_*`). **Pas** encore `TELEGRAM_OWNER_ID`. Redéploie.
+4. Connecté à l'app dans ton navigateur, ouvre `https://ton-projet.vercel.app/api/telegram/setup` : il enregistre le webhook chez Telegram.
+5. Écris n'importe quoi à ton bot : il répond avec **ton ID Telegram**. Ajoute-le dans `TELEGRAM_OWNER_ID`, redéploie. À partir de là, le bot ne répond **qu'à toi** ; tout autre utilisateur est ignoré en silence.
+
+### Utilisation
+- **Envoie une vidéo** au bot (une légende jointe vaut instruction), puis : « publie-la sur mon TikTok avec des hashtags voyage » → **publication immédiate**. « Programme-la demain à 18h sur Instagram et Facebook » → programmée (heure de `APP_TIMEZONE`, par défaut Africa/Douala).
+- **Plusieurs comptes** : « publie sur mes deux TikTok » ; en cas d'ambiguïté l'agent pose une seule question.
+- **Vidéo > 20 Mo** : Telegram interdit aux bots de la télécharger. Le bot te renvoie alors un lien d'envoi (valable 30 min) qui uploade directement vers R2 ; il te prévient dans le chat dès que c'est reçu. Le CORS du bucket doit autoriser l'origine de ton site (voir `cloudflare-r2-cors.json`).
+- **Inbox** : chaque réponse à valider arrive dans le chat avec ✅ Envoyer / ↻ Autre / 🚫 Ignorer. **Réponds (reply) au message** avec ton texte pour envoyer ta propre version. `/inbox` ressort les éléments en attente.
+- **Analyse** : « mes vidéos ont marché ? » → l'agent lit les chiffres stockés (vidéos, comptes, évolution) et recommande. Il n'analyse pas le contenu visuel de la vidéo, seulement ses performances, légende, hashtags et horaire.
+- **Déconnecter un compte** : l'agent demande toujours une confirmation par bouton.
+- Commandes : `/aide`, `/inbox`, `/sync`, `/id`.
+
+### Sécurité
+Secret de webhook comparé en temps constant ; verrou sur ton ID ; dédoublonnage des updates ; le token n'est lu que dans l'environnement et n'est jamais loggé ; lien d'upload signé (HMAC) et limité à 30 min ; le texte reçu des abonnés est traité comme une donnée par l'agent.
+
+### Correctifs inclus
+- Les publications **programmées depuis le web** étaient envoyées à Zernio sans fuseau, donc lues comme de l'UTC (une heure d'écart à Yaoundé). Elles utilisent maintenant `APP_TIMEZONE`.
+- Le cron comparait l'heure programmée à l'heure du serveur (UTC) : les vidéos « jamais envoyées » partaient avec une heure de retard. Corrigé aussi.
+
+---
+
+## Installer FLARE Studio sur l'écran d'accueil (PWA)
+
+**Android (Chrome)** : ouvre l'app → bannière « Installer FLARE Studio » → *Installer*. Sinon menu ⋮ → *Installer l'application*.
+**iPhone/iPad (Safari uniquement)** : bouton *Partager* ⬆️ → *Sur l'écran d'accueil*.
+**Ordinateur (Chrome/Edge)** : icône d'installation à droite de la barre d'adresse.
+
+Conditions : l'app doit être servie en **HTTPS** (Vercel le fait). Si tu avais déjà installé l'ancienne version « RUSHES », **désinstalle-la puis réinstalle** : Android et iOS gardent l'ancienne icône tant que l'app n'est pas réinstallée.
+
+Fichiers concernés : `app/manifest.ts`, `public/sw.js`, `public/offline.html`, `public/icon-*.png`, `public/apple-touch-icon.png`. Le `proxy.ts` laisse volontairement publics `manifest.webmanifest`, `sw.js` et `offline.html` (sinon le navigateur, qui les demande sans session, recevrait la page de connexion et l'app ne serait pas installable).
+
+Pour changer l'icône : modifie `public/icon.svg`, puis régénère les 5 PNG (les versions « maskable » et iOS sont en plein cadre, sans coins ni transparence).
+
+> Le workflow GitHub `sync-stats.yml` lit toujours le secret `RUSHES_APP_URL` : ne le renomme pas côté GitHub sans modifier le fichier.

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { zernioCreatePost } from "@/lib/zernio";
+import { APP_TIMEZONE } from "@/lib/publish";
 
 export async function POST(request: Request) {
   const auth = await createSupabaseServerClient();
@@ -31,6 +32,9 @@ export async function POST(request: Request) {
       platforms: targets,
       mediaUrl: videoUrl || undefined,
       scheduledFor: scheduledFor || undefined,
+      // Sans fuseau, Zernio interprétait l'heure saisie comme de l'UTC
+      // (publication décalée d'une heure à Yaoundé).
+      timezone: body.timezone || APP_TIMEZONE,
     });
 
     const { error } = await db
