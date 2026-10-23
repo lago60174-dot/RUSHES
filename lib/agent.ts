@@ -5,7 +5,7 @@ import { syncEverything } from "@/lib/sync";
 import { sendReply, saveInboxSettings } from "@/lib/inbox";
 import { sendMessage } from "@/lib/telegram";
 import { extractFrames, fetchImageBase64, fmtTime } from "@/lib/vision";
-import { agentProvider } from "@/lib/llm";
+import { agentProvider, mistralModel, mistralPost } from "@/lib/llm";
 
 type Db = SupabaseClient;
 type Json = Record<string, unknown>;
@@ -267,12 +267,8 @@ const stripImages = (msgs: MistralMsg[]): MistralMsg[] => msgs.map((m) => Array.
   ? { ...m, content: m.content.map((p) => isImageChunk(p) ? { type: "text", text: "[image non transmise : ce modèle ne gère pas les images]" } : p) }
   : m);
 
-async function mistralChat(key: string, model: string, messages: MistralMsg[]): Promise<{ content: unknown; tool_calls: MistralToolCall[] }> {
-  const call = (msgs: MistralMsg[]) => fetch("https://api.mistral.ai/v1/chat/completions", {
-    method: "POST",
-    headers: { "content-type": "application/json", Authorization: `Bearer ${key}` },
-    body: JSON.stringify({ model, messages: msgs, tools: MISTRAL_TOOLS, tool_choice: "auto", max_tokens: 1800, temperature: 0.5 }),
-  });
+async function mistralChat(model: string, messages: MistralMsg[]): Promise<{ content: unknown; tool_calls: MistralToolCall[] }> {
+  const call = (msgs: MistralMsg[]) => mistralPost({ messages: msgs, tools: MISTRAL_TOOLS, tool_choice: "auto", max_tokens: 1800, temperature: 0.5 }, model);
   let res = await call(messages);
   // Modèle sans vision (ou image refusée) : on réessaie sans les images plutôt que de tout casser.
   if (!res.ok && (res.status === 400 || res.status === 422) && hasImages(messages)) {
@@ -287,8 +283,7 @@ async function mistralChat(key: string, model: string, messages: MistralMsg[]): 
 }
 
 async function mistralLoop(db: Db, userId: string, chatId: number, history: HistoryMsg[], userText: string, images: AgentImage[]): Promise<string> {
-  const key = process.env.MISTRAL_API_KEY!;
-  const model = process.env.AGENT_MISTRAL_MODEL || "mistral-large-latest";
+  const model = mistralModel();
   const messages: MistralMsg[] = [{ role: "system", content: SYSTEM() }, ...history];
   messages.push({
     role: "user",
@@ -298,7 +293,7 @@ async function mistralLoop(db: Db, userId: string, chatId: number, history: Hist
   });
 
   for (let step = 0; step < 8; step++) {
-    const reply = await mistralChat(key, model, messages);
+    const reply = await mistralChat(model, messages);
     if (reply.tool_calls.length === 0) return textOf(reply.content).trim();
 
     messages.push({ role: "assistant", content: textOf(reply.content), tool_calls: reply.tool_calls });

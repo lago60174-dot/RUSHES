@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
+import { mistralPost } from "@/lib/llm";
 
 const PLATFORMS: Record<string, string> = {
   tiktok: "TikTok", instagram: "Instagram",
@@ -8,18 +9,11 @@ const PLATFORMS: Record<string, string> = {
 };
 
 async function callMistral(system: string, user: string) {
-  const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: "mistral-large-latest",
-      max_tokens: 1000,
-      messages: [{ role: "system", content: system }, { role: "user", content: user }],
-    }),
+  const res = await mistralPost({
+    max_tokens: 1000,
+    messages: [{ role: "system", content: system }, { role: "user", content: user }],
   });
+  if (!res.ok) throw new Error(`Mistral ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
   const data = await res.json();
   return (data.choices?.[0]?.message?.content || "")
     .trim().replace(/^```json/i, "").replace(/^```/, "").replace(/```$/, "").trim();

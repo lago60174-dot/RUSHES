@@ -8,6 +8,37 @@ export function isLlmConfigured(): boolean {
 // règle pour les deux. Par défaut Claude si ANTHROPIC_API_KEY existe, sinon
 // Mistral ; AGENT_PROVIDER=mistral|anthropic permet de forcer le choix quand
 // les deux clés sont présentes.
+// Modèle Mistral unique pour tout le projet (agent, inbox, analyse IA).
+// Par défaut « small » : disponible sur les forfaits gratuits ET compatible
+// outils + images. Pour un modèle plus puissant (forfait payant) :
+// MISTRAL_MODEL=mistral-large-latest. AGENT_MISTRAL_MODEL reste accepté.
+export const MISTRAL_DEFAULT_MODEL = "mistral-small-latest";
+export function mistralModel(env: Record<string, string | undefined> = process.env): string {
+  return env.MISTRAL_MODEL?.trim() || env.AGENT_MISTRAL_MODEL?.trim() || MISTRAL_DEFAULT_MODEL;
+}
+export const isMistralTierError = (status: number, body: string) =>
+  status === 403 && /tier_not_allowed|subscription tier/i.test(body);
+
+// POST /chat/completions. Si le modèle demandé n'est pas inclus dans le
+// forfait Mistral (403 tier_not_allowed), on retente UNE fois avec le modèle
+// par défaut au lieu de planter.
+export async function mistralPost(payload: Record<string, unknown>, model = mistralModel()): Promise<Response> {
+  const send = (m: string) => fetch("https://api.mistral.ai/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json", Authorization: `Bearer ${process.env.MISTRAL_API_KEY}` },
+    body: JSON.stringify({ ...payload, model: m }),
+  });
+  const res = await send(model);
+  if (res.status === 403 && model !== MISTRAL_DEFAULT_MODEL) {
+    const body = await res.clone().text().catch(() => "");
+    if (isMistralTierError(res.status, body)) {
+      console.warn(`[mistral] ${model} absent du forfait, repli sur ${MISTRAL_DEFAULT_MODEL}`);
+      return send(MISTRAL_DEFAULT_MODEL);
+    }
+  }
+  return res;
+}
+
 export type AgentProvider = "anthropic" | "mistral";
 export function agentProvider(env: Record<string, string | undefined> = process.env): AgentProvider | null {
   const forced = env.AGENT_PROVIDER?.trim().toLowerCase();
@@ -43,16 +74,11 @@ export async function llmComplete(params: { system: string; user: string; maxTok
   }
 
   if (agentProvider() === "mistral") {
-    const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
-      method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${process.env.MISTRAL_API_KEY}` },
-      body: JSON.stringify({
-        model: "mistral-large-latest",
-        max_tokens: maxTokens,
-        messages: [{ role: "system", content: params.system }, { role: "user", content: params.user }],
-      }),
+    const res = await mistralPost({
+      max_tokens: maxTokens,
+      messages: [{ role: "system", content: params.system }, { role: "user", content: params.user }],
     });
-    if (!res.ok) throw new Error(`Mistral error ${res.status}`);
+    if (!res.ok) throw new Error(`Mistral error ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
     const data = await res.json();
     return data.choices?.[0]?.message?.content ?? "";
   }

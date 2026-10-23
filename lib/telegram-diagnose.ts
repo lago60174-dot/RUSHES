@@ -1,4 +1,4 @@
-import { agentProvider } from "@/lib/llm";
+import { agentProvider, mistralModel, MISTRAL_DEFAULT_MODEL } from "@/lib/llm";
 
 // Logique pure du diagnostic du bot Telegram : aucune requête réseau ici,
 // uniquement l'interprétation de ce que la route /api/telegram/diagnose a
@@ -81,7 +81,7 @@ export function checkEnv(env: Record<string, string | undefined>, requestOrigin:
   // Cerveau de l'agent : même règle de choix que l'agent lui-même (lib/llm.ts)
   const provider = agentProvider(env);
   out.push(provider
-    ? { id: "env.llm", label: "Clé IA de l'agent", status: "ok", detail: provider === "mistral" ? `Mistral (modèle ${env.AGENT_MISTRAL_MODEL?.trim() || "mistral-large-latest"}).` : `Claude (modèle ${env.AGENT_CHAT_MODEL?.trim() || "claude-sonnet-5-5"}).` }
+    ? { id: "env.llm", label: "Clé IA de l'agent", status: "ok", detail: provider === "mistral" ? `Mistral (modèle ${mistralModel(env)}).` : `Claude (modèle ${env.AGENT_CHAT_MODEL?.trim() || "claude-sonnet-5-5"}).` }
     : { id: "env.llm", label: "Clé IA de l'agent", status: "fail", detail: "Ni MISTRAL_API_KEY ni ANTHROPIC_API_KEY : le bot ne peut pas te répondre.", fix: "Ajoute MISTRAL_API_KEY sur Vercel et redéploie." });
 
   // Vocaux
@@ -215,6 +215,27 @@ export function interpretLlmKey(provider: "anthropic" | "mistral", status: numbe
   if (status === 401 || status === 403) return { id: "llm.key", label, status: "fail", detail: `Clé refusée (${status}) : invalide, révoquée ou mal copiée.`, fix: `Recrée la clé, mets-la dans ${name} sur Vercel (sans espace ni guillemet) et redéploie.` };
   if (status === 429) return { id: "llm.key", label, status: "warn", detail: "Trop de requêtes ou quota atteint (429).", fix: "Vérifie ton forfait et ta facturation chez le fournisseur." };
   return { id: "llm.key", label, status: "warn", detail: `Réponse inattendue (${status}).` };
+}
+
+// ── 5c. Le MODÈLE est-il autorisé par le forfait ? ──────────────────────
+// Une clé valide ne suffit pas : Mistral refuse (403 tier_not_allowed) les
+// modèles non inclus dans le forfait. On fait un vrai appel d'1 jeton.
+export type ModelProbe = { status: number | null; body?: string; error?: string };
+export function interpretLlmModel(model: string, main: ModelProbe, fallback?: ModelProbe): Check {
+  const label = `Modèle Mistral utilisable (${model})`;
+  const tier = (p: ModelProbe) => p.status === 403 && /tier_not_allowed|subscription tier/i.test(p.body ?? "");
+  if (main.status === null) return { id: "llm.model", label, status: "warn", detail: `Impossible de tester le modèle : ${main.error ?? "pas de réponse"}.` };
+  if (main.status >= 200 && main.status < 300) return { id: "llm.model", label, status: "ok", detail: "Le modèle répond." };
+  if (tier(main)) {
+    if (fallback && fallback.status !== null && fallback.status >= 200 && fallback.status < 300) {
+      return { id: "llm.model", label, status: "warn", detail: `Ce modèle n'est pas inclus dans ton forfait Mistral. L'app bascule automatiquement sur ${MISTRAL_DEFAULT_MODEL} (ça marche).`, fix: `Pour retirer cet avertissement, mets MISTRAL_MODEL=${MISTRAL_DEFAULT_MODEL} sur Vercel, ou passe à un forfait Mistral qui inclut ${model}.` };
+    }
+    return { id: "llm.model", label, status: "fail", detail: `Ni ${model} ni ${MISTRAL_DEFAULT_MODEL} ne sont autorisés par ton forfait Mistral.`, fix: "Sur console.mistral.ai, vérifie ton forfait (Billing) et active un plan qui donne accès à l'API." };
+  }
+  if (main.status === 404 || (main.status === 400 && /model/i.test(main.body ?? ""))) return { id: "llm.model", label, status: "fail", detail: "Ce nom de modèle n'existe pas chez Mistral.", fix: `Corrige MISTRAL_MODEL (ex. ${MISTRAL_DEFAULT_MODEL}) ou supprime la variable.` };
+  if (main.status === 401) return { id: "llm.model", label, status: "fail", detail: "Clé refusée (401).", fix: "Voir la ligne précédente sur la clé." };
+  if (main.status === 429) return { id: "llm.model", label, status: "warn", detail: "Quota atteint (429) : réessaie dans un moment.", fix: "Vérifie tes limites sur console.mistral.ai." };
+  return { id: "llm.model", label, status: "warn", detail: `Réponse inattendue (${main.status}) : ${(main.body ?? "").slice(0, 160)}` };
 }
 
 // ── 6. Envoi d'un message test ─────────────────────────────────────────

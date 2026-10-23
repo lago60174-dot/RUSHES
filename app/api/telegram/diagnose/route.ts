@@ -4,11 +4,11 @@ import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { getOwnerUserId } from "@/lib/sync";
 import { isOwner } from "@/lib/owner";
 import { tg, sendMessage, getOwnerChatId } from "@/lib/telegram";
-import { agentProvider } from "@/lib/llm";
+import { agentProvider, mistralModel, MISTRAL_DEFAULT_MODEL } from "@/lib/llm";
 import {
   type Check, type ProbeResult, type WebhookInfo,
   checkEnv, interpretGetMe, interpretWebhookInfo, interpretProbe,
-  interpretTables, interpretOwnerUser, interpretSend, interpretLlmKey, summarize, webhookUrlFor,
+  interpretTables, interpretOwnerUser, interpretSend, interpretLlmKey, interpretLlmModel, type ModelProbe, summarize, webhookUrlFor,
 } from "@/lib/telegram-diagnose";
 
 export const maxDuration = 30;
@@ -19,8 +19,23 @@ const ORDER = [
   "env.token", "env.secret", "env.site",
   "tg.getme", "tg.webhook", "probe",
   "env.owner", "db.tables", "db.owner", "env.email",
-  "env.llm", "llm.key", "env.stt", "env.r2", "send",
+  "env.llm", "llm.key", "llm.model", "env.stt", "env.r2", "send",
 ];
+
+// Appel réel d'1 jeton : seule façon de savoir si le forfait autorise le modèle.
+async function mistralModelProbe(model: string): Promise<ModelProbe> {
+  try {
+    const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${process.env.MISTRAL_API_KEY}` },
+      body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }),
+      signal: AbortSignal.timeout(10000),
+    });
+    return { status: res.status, body: res.ok ? undefined : (await res.text().catch(() => "")).slice(0, 300) };
+  } catch (e) {
+    return { status: null, error: (e as Error).message };
+  }
+}
 
 async function probe(url: string, secret: string): Promise<ProbeResult> {
   try {
@@ -99,6 +114,15 @@ export async function GET(request: Request) {
     } catch (e) {
       checks.push(interpretLlmKey(provider, null, (e as Error).message));
     }
+  }
+
+  // Modèle Mistral : autorisé par le forfait ?
+  if (provider === "mistral") {
+    const model = mistralModel();
+    const main = await mistralModelProbe(model);
+    const isTier = main.status === 403 && /tier_not_allowed|subscription tier/i.test(main.body ?? "");
+    const fallback = isTier && model !== MISTRAL_DEFAULT_MODEL ? await mistralModelProbe(MISTRAL_DEFAULT_MODEL) : undefined;
+    checks.push(interpretLlmModel(model, main, fallback));
   }
 
   // Message test (uniquement à la demande)
