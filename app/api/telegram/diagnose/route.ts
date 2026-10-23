@@ -4,10 +4,11 @@ import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { getOwnerUserId } from "@/lib/sync";
 import { isOwner } from "@/lib/owner";
 import { tg, sendMessage, getOwnerChatId } from "@/lib/telegram";
+import { agentProvider } from "@/lib/llm";
 import {
   type Check, type ProbeResult, type WebhookInfo,
   checkEnv, interpretGetMe, interpretWebhookInfo, interpretProbe,
-  interpretTables, interpretOwnerUser, interpretSend, summarize, webhookUrlFor,
+  interpretTables, interpretOwnerUser, interpretSend, interpretLlmKey, summarize, webhookUrlFor,
 } from "@/lib/telegram-diagnose";
 
 export const maxDuration = 30;
@@ -18,7 +19,7 @@ const ORDER = [
   "env.token", "env.secret", "env.site",
   "tg.getme", "tg.webhook", "probe",
   "env.owner", "db.tables", "db.owner", "env.email",
-  "env.llm", "env.stt", "env.r2", "send",
+  "env.llm", "llm.key", "env.stt", "env.r2", "send",
 ];
 
 async function probe(url: string, secret: string): Promise<ProbeResult> {
@@ -85,6 +86,19 @@ export async function GET(request: Request) {
     checks.push(interpretOwnerUser(Boolean(await getOwnerUserId(db))));
   } catch (e) {
     checks.push({ id: "db.tables", label: "Tables du bot (phase15.sql)", status: "fail", detail: (e as Error).message, fix: "Vérifie NEXT_PUBLIC_SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY." });
+  }
+
+  // Clé IA : vraie vérification auprès du fournisseur (liste des modèles, gratuit)
+  const provider = agentProvider();
+  if (provider) {
+    try {
+      const r = provider === "mistral"
+        ? await fetch("https://api.mistral.ai/v1/models", { headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY}` }, signal: AbortSignal.timeout(8000) })
+        : await fetch("https://api.anthropic.com/v1/models", { headers: { "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01" }, signal: AbortSignal.timeout(8000) });
+      checks.push(interpretLlmKey(provider, r.status));
+    } catch (e) {
+      checks.push(interpretLlmKey(provider, null, (e as Error).message));
+    }
   }
 
   // Message test (uniquement à la demande)

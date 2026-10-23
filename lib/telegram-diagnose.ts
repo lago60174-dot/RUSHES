@@ -1,3 +1,5 @@
+import { agentProvider } from "@/lib/llm";
+
 // Logique pure du diagnostic du bot Telegram : aucune requête réseau ici,
 // uniquement l'interprétation de ce que la route /api/telegram/diagnose a
 // collecté. Les secrets ne sont jamais renvoyés (seulement « présent / absent »).
@@ -76,10 +78,11 @@ export function checkEnv(env: Record<string, string | undefined>, requestOrigin:
     ? { id: "env.email", label: "OWNER_EMAIL", status: "ok", detail: "Définie." }
     : { id: "env.email", label: "OWNER_EMAIL", status: "fail", detail: "Absente : le bot ne retrouve pas ton compte et répond « Compte propriétaire introuvable ».", fix: "Mets l'email de ton compte Supabase dans OWNER_EMAIL." });
 
-  // Cerveau de l'agent
-  out.push(has("ANTHROPIC_API_KEY") || has("MISTRAL_API_KEY")
-    ? { id: "env.llm", label: "Clé IA de l'agent", status: "ok", detail: has("ANTHROPIC_API_KEY") ? "ANTHROPIC_API_KEY (Claude)." : "MISTRAL_API_KEY (repli Mistral)." }
-    : { id: "env.llm", label: "Clé IA de l'agent", status: "fail", detail: "Ni ANTHROPIC_API_KEY ni MISTRAL_API_KEY : le bot ne peut pas te répondre.", fix: "Ajoute au moins une des deux clés sur Vercel et redéploie." });
+  // Cerveau de l'agent : même règle de choix que l'agent lui-même (lib/llm.ts)
+  const provider = agentProvider(env);
+  out.push(provider
+    ? { id: "env.llm", label: "Clé IA de l'agent", status: "ok", detail: provider === "mistral" ? `Mistral (modèle ${env.AGENT_MISTRAL_MODEL?.trim() || "mistral-large-latest"}).` : `Claude (modèle ${env.AGENT_CHAT_MODEL?.trim() || "claude-sonnet-5-5"}).` }
+    : { id: "env.llm", label: "Clé IA de l'agent", status: "fail", detail: "Ni MISTRAL_API_KEY ni ANTHROPIC_API_KEY : le bot ne peut pas te répondre.", fix: "Ajoute MISTRAL_API_KEY sur Vercel et redéploie." });
 
   // Vocaux
   out.push(has("MISTRAL_API_KEY") || has("OPENAI_API_KEY")
@@ -200,6 +203,18 @@ export function interpretOwnerUser(found: boolean): Check {
   return found
     ? { id: "db.owner", label: "Compte propriétaire retrouvé", status: "ok", detail: "L'email OWNER_EMAIL correspond à un utilisateur Supabase." }
     : { id: "db.owner", label: "Compte propriétaire retrouvé", status: "fail", detail: "Aucun utilisateur Supabase ne correspond à OWNER_EMAIL.", fix: "Vérifie que OWNER_EMAIL est exactement l'email de ton compte (Authentication > Users)." };
+}
+
+// ── 5b. La clé IA est-elle acceptée par le fournisseur ? ───────────────
+// Test gratuit : on liste les modèles (aucun jeton consommé).
+export function interpretLlmKey(provider: "anthropic" | "mistral", status: number | null, error?: string): Check {
+  const label = `Clé ${provider === "mistral" ? "Mistral" : "Anthropic"} acceptée par le fournisseur`;
+  const name = provider === "mistral" ? "MISTRAL_API_KEY" : "ANTHROPIC_API_KEY";
+  if (status === null) return { id: "llm.key", label, status: "warn", detail: `Impossible de joindre le fournisseur : ${error ?? "pas de réponse"}.` };
+  if (status >= 200 && status < 300) return { id: "llm.key", label, status: "ok", detail: "Clé valide." };
+  if (status === 401 || status === 403) return { id: "llm.key", label, status: "fail", detail: `Clé refusée (${status}) : invalide, révoquée ou mal copiée.`, fix: `Recrée la clé, mets-la dans ${name} sur Vercel (sans espace ni guillemet) et redéploie.` };
+  if (status === 429) return { id: "llm.key", label, status: "warn", detail: "Trop de requêtes ou quota atteint (429).", fix: "Vérifie ton forfait et ta facturation chez le fournisseur." };
+  return { id: "llm.key", label, status: "warn", detail: `Réponse inattendue (${status}).` };
 }
 
 // ── 6. Envoi d'un message test ─────────────────────────────────────────

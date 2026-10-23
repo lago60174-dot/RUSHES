@@ -5,6 +5,7 @@ import { syncEverything } from "@/lib/sync";
 import { sendReply, saveInboxSettings } from "@/lib/inbox";
 import { sendMessage } from "@/lib/telegram";
 import { extractFrames, fetchImageBase64, fmtTime } from "@/lib/vision";
+import { agentProvider } from "@/lib/llm";
 
 type Db = SupabaseClient;
 type Json = Record<string, unknown>;
@@ -199,15 +200,13 @@ type Block = { type: string; text?: string; id?: string; name?: string; input?: 
 type Msg = { role: "user" | "assistant"; content: string | Block[] | Array<Json> };
 export type AgentInput = string | { text: string; images?: Array<{ mediaType: string; data: string }> };
 
-export async function runAgent(db: Db, userId: string, chatId: number, input: AgentInput): Promise<string> {
-  const userText = typeof input === "string" ? input : input.text;
-  const images = typeof input === "string" ? [] : (input.images ?? []);
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return "L'agent a besoin de ANTHROPIC_API_KEY sur Vercel pour comprendre tes instructions.";
+type HistoryMsg = { role: "user" | "assistant"; content: string };
+type AgentImage = { mediaType: string; data: string };
 
-  const { data: past } = await db.from("agent_messages").select("role, content")
-    .eq("user_id", userId).order("id", { ascending: false }).limit(30);
-  const messages: Msg[] = (past ?? []).reverse().map((m) => ({ role: m.role as "user" | "assistant", content: m.content as string }));
+// ── Fournisseur Anthropic (Claude) ─────────────────────────────────────
+async function anthropicLoop(db: Db, userId: string, chatId: number, history: HistoryMsg[], userText: string, images: AgentImage[]): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY!;
+  const messages: Msg[] = [...history];
   messages.push({
     role: "user",
     content: images.length
@@ -215,7 +214,6 @@ export async function runAgent(db: Db, userId: string, chatId: number, input: Ag
       : userText,
   });
 
-  let finalText = "";
   for (let step = 0; step < 8; step++) {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -228,8 +226,7 @@ export async function runAgent(db: Db, userId: string, chatId: number, input: Ag
 
     const uses = data.content.filter((b) => b.type === "tool_use");
     if (data.stop_reason !== "tool_use" || uses.length === 0) {
-      finalText = data.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
-      break;
+      return data.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
     }
     const results = [];
     for (const u of uses) {
@@ -244,6 +241,108 @@ export async function runAgent(db: Db, userId: string, chatId: number, input: Ag
     }
     messages.push({ role: "user", content: results });
   }
+  return "";
+}
+
+// ── Fournisseur Mistral ────────────────────────────────────────────────
+// API compatible « function calling » : mêmes outils, autre enveloppe.
+// Différences gérées ici : les outils s'appellent via tool_calls (arguments en
+// texte JSON), les résultats reviennent en messages role "tool" (texte seul),
+// donc les images de watch_video sont renvoyées dans un message utilisateur
+// juste après, avec un message assistant intercalé pour garder l'alternance
+// des rôles que Mistral impose.
+type MistralMsg = { role: "system" | "user" | "assistant" | "tool"; content: unknown; tool_calls?: unknown[]; tool_call_id?: string; name?: string };
+type MistralToolCall = { id: string; function: { name: string; arguments: string | Json } };
+
+const MISTRAL_TOOLS = TOOLS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } }));
+
+const textOf = (c: unknown): string =>
+  typeof c === "string" ? c
+    : Array.isArray(c) ? c.map((p) => ((p as Json)?.type === "text" ? String((p as Json).text ?? "") : "")).join("")
+    : "";
+
+const isImageChunk = (p: unknown) => (p as Json)?.type === "image_url";
+const hasImages = (msgs: MistralMsg[]) => msgs.some((m) => Array.isArray(m.content) && m.content.some(isImageChunk));
+const stripImages = (msgs: MistralMsg[]): MistralMsg[] => msgs.map((m) => Array.isArray(m.content)
+  ? { ...m, content: m.content.map((p) => isImageChunk(p) ? { type: "text", text: "[image non transmise : ce modèle ne gère pas les images]" } : p) }
+  : m);
+
+async function mistralChat(key: string, model: string, messages: MistralMsg[]): Promise<{ content: unknown; tool_calls: MistralToolCall[] }> {
+  const call = (msgs: MistralMsg[]) => fetch("https://api.mistral.ai/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ model, messages: msgs, tools: MISTRAL_TOOLS, tool_choice: "auto", max_tokens: 1800, temperature: 0.5 }),
+  });
+  let res = await call(messages);
+  // Modèle sans vision (ou image refusée) : on réessaie sans les images plutôt que de tout casser.
+  if (!res.ok && (res.status === 400 || res.status === 422) && hasImages(messages)) {
+    messages.splice(0, messages.length, ...stripImages(messages));
+    res = await call(messages);
+  }
+  if (!res.ok) throw new Error(`Mistral ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data = await res.json() as { choices?: Array<{ message?: { content?: unknown; tool_calls?: MistralToolCall[] } }> };
+  const msg = data.choices?.[0]?.message;
+  if (!msg) throw new Error("Mistral : réponse vide.");
+  return { content: msg.content, tool_calls: msg.tool_calls ?? [] };
+}
+
+async function mistralLoop(db: Db, userId: string, chatId: number, history: HistoryMsg[], userText: string, images: AgentImage[]): Promise<string> {
+  const key = process.env.MISTRAL_API_KEY!;
+  const model = process.env.AGENT_MISTRAL_MODEL || "mistral-large-latest";
+  const messages: MistralMsg[] = [{ role: "system", content: SYSTEM() }, ...history];
+  messages.push({
+    role: "user",
+    content: images.length
+      ? [...images.map((im) => ({ type: "image_url", image_url: `data:${im.mediaType};base64,${im.data}` })), { type: "text", text: userText }]
+      : userText,
+  });
+
+  for (let step = 0; step < 8; step++) {
+    const reply = await mistralChat(key, model, messages);
+    if (reply.tool_calls.length === 0) return textOf(reply.content).trim();
+
+    messages.push({ role: "assistant", content: textOf(reply.content), tool_calls: reply.tool_calls });
+    const pendingImages: Json[] = [];
+    for (const c of reply.tool_calls) {
+      let content: string;
+      try {
+        const args = typeof c.function.arguments === "string" ? JSON.parse(c.function.arguments || "{}") : (c.function.arguments ?? {});
+        const out = await runTool(db, userId, chatId, c.function.name, args as Json);
+        const blocks = (out as { __blocks?: Block[] } | null)?.__blocks;
+        if (blocks) {
+          content = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n") + "\n(Les images sont jointes dans le message suivant, dans l'ordre.)";
+          for (const b of blocks) {
+            if (b.type === "image") pendingImages.push({ type: "image_url", image_url: `data:${(b.source as Json).media_type};base64,${(b.source as Json).data}` });
+          }
+        } else {
+          content = trunc(out);
+        }
+      } catch (e) {
+        content = `Erreur : ${(e as Error).message}`;
+      }
+      messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content });
+    }
+    if (pendingImages.length) {
+      messages.push({ role: "assistant", content: "J'ai bien reçu les images extraites, je les regarde." });
+      messages.push({ role: "user", content: [...pendingImages, { type: "text", text: "Voici les images demandées, dans l'ordre. Continue ta réponse en t'appuyant dessus." }] });
+    }
+  }
+  return "";
+}
+
+export async function runAgent(db: Db, userId: string, chatId: number, input: AgentInput): Promise<string> {
+  const userText = typeof input === "string" ? input : input.text;
+  const images = typeof input === "string" ? [] : (input.images ?? []);
+  const provider = agentProvider();
+  if (!provider) return "L'agent a besoin de MISTRAL_API_KEY (ou ANTHROPIC_API_KEY) sur Vercel pour comprendre tes instructions.";
+
+  const { data: past } = await db.from("agent_messages").select("role, content")
+    .eq("user_id", userId).order("id", { ascending: false }).limit(30);
+  const history: HistoryMsg[] = (past ?? []).reverse().map((m) => ({ role: m.role as "user" | "assistant", content: m.content as string }));
+
+  let finalText = provider === "anthropic"
+    ? await anthropicLoop(db, userId, chatId, history, userText, images)
+    : await mistralLoop(db, userId, chatId, history, userText, images);
   if (!finalText) finalText = "Je n'ai pas réussi à terminer cette demande. Peux-tu reformuler ?";
 
   await db.from("agent_messages").insert([
