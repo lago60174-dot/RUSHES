@@ -1,6 +1,7 @@
 import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { getOwnerUserId } from "@/lib/sync";
 import { runAgent } from "@/lib/agent";
+import { friendlyLlmError } from "@/lib/llm";
 import { sendReply, triageItem, notifyTelegramApproval } from "@/lib/inbox";
 import { isR2Configured, buildObjectKey, r2PutObject, r2PublicUrl } from "@/lib/r2";
 import { createUploadToken } from "@/lib/upload-token";
@@ -75,7 +76,9 @@ export async function handleUpdate(update: TgUpdate, deps: { db?: Db } = {}) {
     if (update.message) return await handleMessage(db, userId, chatId, update.message);
   } catch (e) {
     console.error("[telegram] erreur :", (e as Error).message);
-    await sendMessage(chatId, `⚠️ Je n'ai pas réussi à traiter ça : ${(e as Error).message.slice(0, 200)}`).catch(() => {});
+    const raw = (e as Error).message;
+    const friendly = friendlyLlmError(raw);
+    await sendMessage(chatId, friendly ? `⚠️ ${friendly}` : `⚠️ Je n'ai pas réussi à traiter ça : ${raw.slice(0, 200)}`).catch(() => {});
   }
 }
 

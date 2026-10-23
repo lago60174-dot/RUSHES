@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { getOwnerUserId } from "@/lib/sync";
 import { isOwner } from "@/lib/owner";
 import { tg, sendMessage, getOwnerChatId } from "@/lib/telegram";
-import { agentProvider, mistralModel, MISTRAL_DEFAULT_MODEL } from "@/lib/llm";
+import { agentProvider, mistralModel, mistralPost, MISTRAL_DEFAULT_MODEL } from "@/lib/llm";
 import {
   type Check, type ProbeResult, type WebhookInfo,
   checkEnv, interpretGetMe, interpretWebhookInfo, interpretProbe,
@@ -23,14 +23,11 @@ const ORDER = [
 ];
 
 // Appel réel d'1 jeton : seule façon de savoir si le forfait autorise le modèle.
+// Passe par mistralPost (cadence + retry 429) SANS repli automatique, pour
+// rapporter fidèlement l'état du modèle demandé.
 async function mistralModelProbe(model: string): Promise<ModelProbe> {
   try {
-    const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
-      method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${process.env.MISTRAL_API_KEY}` },
-      body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }),
-      signal: AbortSignal.timeout(10000),
-    });
+    const res = await mistralPost({ max_tokens: 1, messages: [{ role: "user", content: "ping" }] }, model, { fallback: false });
     return { status: res.status, body: res.ok ? undefined : (await res.text().catch(() => "")).slice(0, 300) };
   } catch (e) {
     return { status: null, error: (e as Error).message };
@@ -103,26 +100,26 @@ export async function GET(request: Request) {
     checks.push({ id: "db.tables", label: "Tables du bot (phase15.sql)", status: "fail", detail: (e as Error).message, fix: "Vérifie NEXT_PUBLIC_SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY." });
   }
 
-  // Clé IA : vraie vérification auprès du fournisseur (liste des modèles, gratuit)
+  // Clé IA + modèle. Mistral : UNE seule requête (le forfait gratuit n'accepte
+  // qu'~1 requête/s, et le bot peut répondre en même temps) qui valide à la fois
+  // la clé et le modèle. Anthropic : liste des modèles (gratuit).
   const provider = agentProvider();
-  if (provider) {
-    try {
-      const r = provider === "mistral"
-        ? await fetch("https://api.mistral.ai/v1/models", { headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY}` }, signal: AbortSignal.timeout(8000) })
-        : await fetch("https://api.anthropic.com/v1/models", { headers: { "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01" }, signal: AbortSignal.timeout(8000) });
-      checks.push(interpretLlmKey(provider, r.status));
-    } catch (e) {
-      checks.push(interpretLlmKey(provider, null, (e as Error).message));
-    }
-  }
-
-  // Modèle Mistral : autorisé par le forfait ?
   if (provider === "mistral") {
     const model = mistralModel();
     const main = await mistralModelProbe(model);
     const isTier = main.status === 403 && /tier_not_allowed|subscription tier/i.test(main.body ?? "");
+    // 401 (ou 403 hors forfait) = clé en cause ; tout autre statut prouve que la clé est acceptée.
+    const keyStatus = main.status === null ? null : (main.status === 401 || (main.status === 403 && !isTier)) ? main.status : 200;
+    checks.push(interpretLlmKey("mistral", keyStatus, main.error));
     const fallback = isTier && model !== MISTRAL_DEFAULT_MODEL ? await mistralModelProbe(MISTRAL_DEFAULT_MODEL) : undefined;
     checks.push(interpretLlmModel(model, main, fallback));
+  } else if (provider === "anthropic") {
+    try {
+      const r = await fetch("https://api.anthropic.com/v1/models", { headers: { "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01" }, signal: AbortSignal.timeout(8000) });
+      checks.push(interpretLlmKey("anthropic", r.status));
+    } catch (e) {
+      checks.push(interpretLlmKey("anthropic", null, (e as Error).message));
+    }
   }
 
   // Message test (uniquement à la demande)

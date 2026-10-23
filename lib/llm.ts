@@ -19,17 +19,51 @@ export function mistralModel(env: Record<string, string | undefined> = process.e
 export const isMistralTierError = (status: number, body: string) =>
   status === 403 && /tier_not_allowed|subscription tier/i.test(body);
 
-// POST /chat/completions. Si le modèle demandé n'est pas inclus dans le
-// forfait Mistral (403 tier_not_allowed), on retente UNE fois avec le modèle
-// par défaut au lieu de planter.
-export async function mistralPost(payload: Record<string, unknown>, model = mistralModel()): Promise<Response> {
-  const send = (m: string) => fetch("https://api.mistral.ai/v1/chat/completions", {
-    method: "POST",
-    headers: { "content-type": "application/json", Authorization: `Bearer ${process.env.MISTRAL_API_KEY}` },
-    body: JSON.stringify({ ...payload, model: m }),
-  });
+// ── Cadence des appels Mistral ─────────────────────────────────────────
+// Le forfait gratuit autorise ~1 requête/seconde PAR MODÈLE. Or l'agent
+// enchaîne plusieurs appels (outil → réponse) : sans précaution, le 2e est
+// refusé en 429. On espace donc les appels (MISTRAL_MIN_GAP_MS, défaut 1100 ms ;
+// mets 0 sur un forfait payant) ET on réessaie quand même sur un 429.
+export const mistralPacing = { minGapMs: -1, retries: 3, retryBaseMs: 1200 };
+const gapMs = () => {
+  if (mistralPacing.minGapMs >= 0) return mistralPacing.minGapMs;
+  const v = Number(process.env.MISTRAL_MIN_GAP_MS);
+  return Number.isFinite(v) && process.env.MISTRAL_MIN_GAP_MS?.trim() ? Math.max(0, v) : 1100;
+};
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+let nextSlot = 0;
+async function waitForSlot() {
+  // Réservation atomique d'un créneau : des appels simultanés se font la queue.
+  const slot = Math.max(Date.now(), nextSlot);
+  nextSlot = slot + gapMs();
+  const wait = slot - Date.now();
+  if (wait > 0) await sleep(wait);
+}
+
+// POST /chat/completions avec cadence + nouvelle tentative sur 429. Si le
+// modèle demandé n'est pas inclus dans le forfait (403 tier_not_allowed), on
+// retente UNE fois avec le modèle par défaut (désactivable : opts.fallback=false).
+export async function mistralPost(
+  payload: Record<string, unknown>,
+  model = mistralModel(),
+  opts: { fallback?: boolean } = {},
+): Promise<Response> {
+  const send = async (m: string): Promise<Response> => {
+    for (let attempt = 0; ; attempt++) {
+      await waitForSlot();
+      const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: `Bearer ${process.env.MISTRAL_API_KEY}` },
+        body: JSON.stringify({ ...payload, model: m }),
+      });
+      if (res.status !== 429 || attempt >= mistralPacing.retries) return res;
+      const retryAfter = Number(res.headers?.get("retry-after"));
+      await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 8000) : mistralPacing.retryBaseMs * (attempt + 1));
+    }
+  };
+
   const res = await send(model);
-  if (res.status === 403 && model !== MISTRAL_DEFAULT_MODEL) {
+  if (opts.fallback !== false && res.status === 403 && model !== MISTRAL_DEFAULT_MODEL) {
     const body = await res.clone().text().catch(() => "");
     if (isMistralTierError(res.status, body)) {
       console.warn(`[mistral] ${model} absent du forfait, repli sur ${MISTRAL_DEFAULT_MODEL}`);
@@ -37,6 +71,15 @@ export async function mistralPost(payload: Record<string, unknown>, model = mist
     }
   }
   return res;
+}
+
+// Message lisible pour l'utilisateur (Telegram) à partir d'une erreur LLM brute.
+export function friendlyLlmError(message: string): string | null {
+  if (/\b429\b|rate.?limit/i.test(message)) return "Mistral limite le nombre de requêtes (forfait gratuit : environ 1 par seconde). J'ai déjà réessayé plusieurs fois : attends une dizaine de secondes puis renvoie ton message.";
+  if (/tier_not_allowed|subscription tier/i.test(message)) return "Ton forfait Mistral n'autorise pas ce modèle. Mets MISTRAL_MODEL=mistral-small-latest sur Vercel puis redéploie.";
+  if (/(Mistral|Anthropic)( error)? 40[13]\b/.test(message)) return "La clé IA est refusée. Vérifie MISTRAL_API_KEY sur Vercel (clé valide, sans espace) puis redéploie.";
+  if (/(Mistral|Anthropic)( error)? 5\d\d\b/.test(message)) return "Le service IA a un souci de son côté. Réessaie dans un instant.";
+  return null;
 }
 
 export type AgentProvider = "anthropic" | "mistral";
