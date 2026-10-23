@@ -254,3 +254,22 @@ Fichiers concernés : `app/manifest.ts`, `public/sw.js`, `public/offline.html`, 
 Pour changer l'icône : modifie `public/icon.svg`, puis régénère les 5 PNG (les versions « maskable » et iOS sont en plein cadre, sans coins ni transparence).
 
 > Le workflow GitHub `sync-stats.yml` lit toujours le secret `RUSHES_APP_URL` : ne le renomme pas côté GitHub sans modifier le fichier.
+
+---
+
+## Discuter avec le bot, lui envoyer des vocaux, lui faire regarder tes vidéos
+
+Le bot n'est plus qu'un exécutant de commandes : tu peux **simplement lui parler** (« comment tu vas ? », « j'ai la flemme aujourd'hui », « t'en penses quoi de mon idée ? ») et il répond comme à une vraie conversation. Il garde les 30 derniers échanges en mémoire.
+
+- **Avis sur une vidéo** : « tu penses quoi de ma dernière vidéo ? ». Le bot en extrait jusqu'à 8 images réparties sur sa durée (outil `watch_video`) et juge l'accroche, le cadrage, le texte à l'écran, le rythme et l'appel à l'action, puis propose légende et hashtags. Il peut aussi regarder une vidéo déjà publiée (si son fichier est sur R2). **Il n'entend pas le son** : il ne commentera ni la musique ni la voix.
+- **Photos** : envoie une miniature ou une capture, il la regarde et en discute.
+- **Vocaux** : parle-lui, il transcrit (Mistral Voxtral, même clé `MISTRAL_API_KEY` que l'analyse ; repli OpenAI si `OPENAI_API_KEY` est définie) et **te montre ce qu'il a compris** (🎙️ « … ») avant d'agir. Un vocal envoyé *en réponse à une carte de validation* de l'inbox devient un **brouillon à confirmer**, jamais un envoi direct (une transcription peut être fausse et la réponse est publique). Limite : 10 minutes / 20 Mo.
+- **Questions sur tes stats** : « comment vont mes vidéos ? » → il lit tes vrais chiffres et répond en langage naturel (2-3 constats + 1 conseil).
+
+### À savoir côté technique
+- **Aucune migration SQL** : rien à relancer dans Supabase pour cette fonctionnalité.
+- L'extraction d'images utilise `ffmpeg-static` (binaire de 76 Mo, embarqué dans la fonction `/api/telegram/webhook` via `next.config.mjs`). Pourquoi on télécharge la vidéo au lieu de donner l'URL à ffmpeg : ce binaire **plante dès qu'il résout un nom de domaine**, donc Node télécharge (150 Mo max) dans `/tmp` et ffmpeg lit le fichier local, supprimé ensuite.
+- **Repli** : si ffmpeg n'est pas disponible ou la vidéo est trop lourde, le bot se rabat sur la miniature (celle que Telegram fournit à la réception, rangée dans R2 en `<fichier>.thumb.jpg`, ou celle de Zernio pour une vidéo publiée) et **dit clairement qu'il ne juge que la couverture**.
+- Sécurité : ffmpeg ne reçoit que des URL du domaine `R2_PUBLIC_URL` ; le texte des commentaires reste traité comme une donnée.
+- Les erreurs (API en panne, vocal illisible…) sont maintenant **annoncées dans le chat** au lieu d'un silence.
+- Le webhook dispose de 60 s ; un long téléchargement + analyse d'images + réponse peut s'en approcher.
