@@ -226,8 +226,25 @@ async function zernioGetGenericFollowerStats(accountId: string): Promise<Followe
   }
   const data = await res.json().catch(() => null);
   if (!data) throw new Error("Zernio est indisponible (réponse invalide sur /accounts/follower-stats).");
-  const raw = Array.isArray(data.accounts) ? data.accounts[0] : (data.stats ?? data);
-  const stats = normalizeFollowerStats(raw);
+  // Forme réelle confirmée (log de prod) :
+  // { accounts: [ { _id, currentFollowers, growth, accountStats: { likesCount,
+  //   videoCount, followingCount, totalViews } } ], stats: { <id>: [...] } }
+  // Zernio renvoie TOUS les comptes même avec ?accountId= : on retrouve donc
+  // le bon par _id au lieu de prendre accounts[0] à l'aveugle.
+  let raw: Record<string, unknown> | undefined;
+  if (Array.isArray(data.accounts)) {
+    const list = data.accounts as Record<string, unknown>[];
+    raw = list.find((a) => a?._id === accountId) ?? (list.length === 1 ? list[0] : undefined);
+  } else {
+    raw = (data.stats ?? data) as Record<string, unknown>;
+  }
+  const accStats = (raw?.accountStats ?? {}) as Record<string, unknown>;
+  const stats = normalizeFollowerStats({
+    ...accStats,
+    ...raw,
+    followerCount: raw?.followerCount ?? raw?.follower_count ?? raw?.currentFollowers,
+  });
+  if (typeof accStats.totalViews === "number") stats.pageViews = accStats.totalViews;
   if (stats.followerCount === 0 && stats.likesCount === 0 && stats.videoCount === 0) {
     console.error(
       `[zernio] follower-stats (générique) a renvoyé des zéros pour accountId=${accountId}. Réponse brute :`,
