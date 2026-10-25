@@ -40,9 +40,30 @@ export async function mistralWaitSlot() {
   if (wait > 0) await sleep(wait);
 }
 
-// POST /chat/completions avec cadence + nouvelle tentative sur 429. Si le
-// modèle demandé n'est pas inclus dans le forfait (403 tier_not_allowed), on
-// retente UNE fois avec le modèle par défaut (désactivable : opts.fallback=false).
+// Modèles essayés, dans l'ordre, quand celui demandé est indisponible pour ce
+// compte. Tous gèrent le chat et les outils. Les modèles « code » en sont exclus.
+export const MISTRAL_FALLBACK_CHAIN = ["mistral-small-latest", "ministral-14b-latest", "ministral-8b-latest", "mistral-medium-latest", "open-mistral-nemo"];
+
+// Le modèle est INDISPONIBLE (inutile de réessayer) si : hors forfait (403
+// tier_not_allowed), introuvable (404), ou quota de 0 requête/minute sur ce
+// compte (429 + x-ratelimit-limit-req-minute=0, ce qu'on voit sur un forfait
+// gratuit qui n'ouvre pas tous les modèles). Un 429 « normal » est transitoire.
+export const isZeroQuota = (res: Response) => res.status === 429 && res.headers?.get("x-ratelimit-limit-req-minute") === "0";
+async function isModelUnavailable(res: Response): Promise<boolean> {
+  if (res.status === 404 || isZeroQuota(res)) return true;
+  if (res.status === 403) return isMistralTierError(403, await res.clone().text().catch(() => ""));
+  return false;
+}
+
+// Mémoire (par instance serverless) des modèles indisponibles, pour ne pas
+// perdre un aller-retour à chaque message.
+const blockedUntil = new Map<string, number>();
+const isBlocked = (m: string) => (blockedUntil.get(m) ?? 0) > Date.now();
+export const resetMistralBlockedModels = () => blockedUntil.clear();
+
+// POST /chat/completions avec cadence + nouvelle tentative sur 429 transitoire.
+// Si le modèle demandé est indisponible (voir ci-dessus), bascule automatique
+// sur la chaîne de repli (désactivable : opts.fallback=false, utilisé par le diagnostic).
 export async function mistralPost(
   payload: Record<string, unknown>,
   model = mistralModel(),
@@ -57,21 +78,29 @@ export async function mistralPost(
         headers: { "content-type": "application/json", Authorization: `Bearer ${process.env.MISTRAL_API_KEY}` },
         body: JSON.stringify({ ...payload, model: m }),
       });
-      if (res.status !== 429 || attempt >= maxRetries) return res;
+      // Quota de 0 : attendre ne servira à rien, on rend la main tout de suite.
+      if (res.status !== 429 || isZeroQuota(res) || attempt >= maxRetries) return res;
       const retryAfter = Number(res.headers?.get("retry-after"));
       await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 8000) : mistralPacing.retryBaseMs * (attempt + 1));
     }
   };
 
-  const res = await send(model);
-  if (opts.fallback !== false && res.status === 403 && model !== MISTRAL_DEFAULT_MODEL) {
-    const body = await res.clone().text().catch(() => "");
-    if (isMistralTierError(res.status, body)) {
-      console.warn(`[mistral] ${model} absent du forfait, repli sur ${MISTRAL_DEFAULT_MODEL}`);
-      return send(MISTRAL_DEFAULT_MODEL);
+  if (opts.fallback === false) return send(model);
+
+  const order = [model, ...MISTRAL_FALLBACK_CHAIN.filter((m) => m !== model)];
+  let first: Response | null = null;
+  for (const m of order) {
+    if (m === model && isBlocked(m) && order.length > 1) continue; // on sait déjà qu'il est inutilisable
+    const res = await send(m);
+    if (!(await isModelUnavailable(res))) {
+      if (m !== model) console.warn(`[mistral] ${model} indisponible sur ce compte, réponse via ${m}`);
+      return res;
     }
+    first ??= res;
+    blockedUntil.set(m, Date.now() + 10 * 60_000);
+    console.warn(`[mistral] ${m} indisponible (${res.status}), essai du modèle suivant`);
   }
-  return res;
+  return first ?? send(model);
 }
 
 // ── Sondes (diagnostic) ───────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { agentProvider, mistralModel, MISTRAL_DEFAULT_MODEL, type ModelProbe, type MistralModelInfo } from "@/lib/llm";
+import { agentProvider, mistralModel, MISTRAL_DEFAULT_MODEL, MISTRAL_FALLBACK_CHAIN, type ModelProbe, type MistralModelInfo } from "@/lib/llm";
 
 // Logique pure du diagnostic du bot Telegram : aucune requête réseau ici,
 // uniquement l'interprétation de ce que la route /api/telegram/diagnose a
@@ -220,16 +220,24 @@ export function interpretLlmKey(provider: "anthropic" | "mistral", status: numbe
 // ── 5c. Le MODÈLE est-il autorisé par le forfait ? ──────────────────────
 // Une clé valide ne suffit pas : Mistral refuse (403 tier_not_allowed) les
 // modèles non inclus dans le forfait. On fait un vrai appel d'1 jeton.
-export function interpretLlmModel(model: string, main: ModelProbe, fallback?: ModelProbe): Check {
+export function interpretLlmModel(model: string, main: ModelProbe, fallback?: ModelProbe, fallbackModel: string = MISTRAL_DEFAULT_MODEL): Check {
   const label = `Modèle Mistral utilisable (${model})`;
   const tier = (p: ModelProbe) => p.status === 403 && /tier_not_allowed|subscription tier/i.test(p.body ?? "");
   if (main.status === null) return { id: "llm.model", label, status: "warn", detail: `Impossible de tester le modèle : ${main.error ?? "pas de réponse"}.` };
   if (main.status >= 200 && main.status < 300) return { id: "llm.model", label, status: "ok", detail: "Le modèle répond." };
-  if (tier(main)) {
+  const zero = main.status === 429 && main.headers?.["x-ratelimit-limit-req-minute"] === "0";
+  if (tier(main) || zero) {
     if (fallback && fallback.status !== null && fallback.status >= 200 && fallback.status < 300) {
-      return { id: "llm.model", label, status: "warn", detail: `Ce modèle n'est pas inclus dans ton forfait Mistral. L'app bascule automatiquement sur ${MISTRAL_DEFAULT_MODEL} (ça marche).`, fix: `Pour retirer cet avertissement, mets MISTRAL_MODEL=${MISTRAL_DEFAULT_MODEL} sur Vercel, ou passe à un forfait Mistral qui inclut ${model}.` };
+      return {
+        id: "llm.model", label, status: "warn",
+        detail: zero
+          ? `Ton compte a un quota de 0 requête/minute sur ce modèle (typique du forfait gratuit). L'app bascule automatiquement sur ${fallbackModel}, qui fonctionne.`
+          : `Ce modèle n'est pas inclus dans ton forfait Mistral. L'app bascule automatiquement sur ${fallbackModel}, qui fonctionne.`,
+        fix: `Pour retirer cet avertissement et gagner un aller-retour par message, mets MISTRAL_MODEL=${fallbackModel} sur Vercel.`,
+      };
     }
-    return { id: "llm.model", label, status: "fail", detail: `Ni ${model} ni ${MISTRAL_DEFAULT_MODEL} ne sont autorisés par ton forfait Mistral.`, fix: "Sur console.mistral.ai, vérifie ton forfait (Billing) et active un plan qui donne accès à l'API." };
+    const hdr = main.headers && Object.keys(main.headers).length ? ` (${Object.entries(main.headers).map(([k, v]) => `${k}=${v}`).join(", ")})` : "";
+    return { id: "llm.model", label, status: "fail", detail: zero ? `Quota de 0 requête/minute sur ${model}${hdr} et aucun modèle de secours ne répond.` : `Ni ${model} ni les modèles de secours ne sont autorisés par ton forfait Mistral.`, fix: "Clique sur « Chercher un modèle qui marche », ou vérifie ton forfait sur admin.mistral.ai (Limits, Subscription)." };
   }
   if (main.status === 404 || (main.status === 400 && /model/i.test(main.body ?? ""))) return { id: "llm.model", label, status: "fail", detail: "Ce nom de modèle n'existe pas chez Mistral.", fix: `Corrige MISTRAL_MODEL (ex. ${MISTRAL_DEFAULT_MODEL}) ou supprime la variable.` };
   if (main.status === 401) return { id: "llm.model", label, status: "fail", detail: "Clé refusée (401).", fix: "Voir la ligne précédente sur la clé." };
@@ -265,7 +273,11 @@ export function summarize(checks: Check[]): { level: "ok" | "warn" | "fail"; hea
 }
 
 // ── Recherche d'un modèle Mistral qui fonctionne ───────────────────────
-const STATIC_CANDIDATES = ["mistral-small-latest", "open-mistral-nemo", "ministral-8b-latest", "ministral-3b-latest", "mistral-medium-latest", "mistral-large-latest"];
+// Modèles inadaptés à un assistant conversationnel avec outils : code, complétion,
+// embeddings, modération, OCR, audio, raisonnement (réponses en blocs « pensée »).
+const NOT_FOR_AGENT = /embed|moderation|ocr|voxtral|transcri|realtime|code|codestral|devstral|fim|mathstral|magistral|classif/i;
+
+const STATIC_CANDIDATES = ["mistral-small-latest", "ministral-14b-latest", "ministral-8b-latest", "mistral-medium-latest", "open-mistral-nemo", "ministral-3b-latest", "mistral-large-latest"];
 
 // Garde les modèles de chat compatibles « outils » (indispensables à l'agent),
 // écarte embeddings / modération / OCR / audio / modèles dépréciés. Modèle actuel
@@ -277,7 +289,7 @@ export function pickCandidateModels(list: MistralModelInfo[] | null, current: st
   if (list && list.length) {
     const usable = list.filter((m) =>
       m.capabilities?.completion_chat !== false && m.capabilities?.function_calling !== false &&
-      !m.deprecation && !/embed|moderation|ocr|voxtral|transcri|realtime|codestral-mamba|mathstral/i.test(m.id));
+      !m.deprecation && !NOT_FOR_AGENT.test(m.id));
     usable.filter((m) => /-latest$/.test(m.id)).forEach((m) => add(m.id));
     usable.filter((m) => !/-latest$/.test(m.id)).forEach((m) => add(m.id));
   } else {
@@ -298,6 +310,13 @@ export function classifyProbe(model: string, p: ModelProbe): ScanResult {
   return { model, status: st, ok: false, verdict: `Réponse ${st}` };
 }
 
+// Plus petit = meilleur choix pour un assistant conversationnel avec outils.
+export function modelRank(id: string): number {
+  const order = [/mistral-large/, /mistral-medium/, /mistral-small/, /ministral-14b/, /ministral-8b/, /open-mistral-nemo|mistral-nemo/, /ministral-3b/];
+  const i = order.findIndex((re) => re.test(id));
+  return i === -1 ? 10 : i;
+}
+
 export function summarizeScan(results: ScanResult[], current: string): { level: "ok" | "warn" | "fail"; message: string; recommended: string | null } {
   const working = results.filter((r) => r.ok);
   if (working.length === 0) {
@@ -310,6 +329,6 @@ export function summarizeScan(results: ScanResult[], current: string): { level: 
     };
   }
   if (working.some((r) => r.model === current)) return { level: "ok", recommended: current, message: `Ton modèle actuel (${current}) fonctionne.` };
-  const best = working[0].model;
+  const best = [...working].sort((a, b) => modelRank(a.model) - modelRank(b.model))[0].model;
   return { level: "warn", recommended: best, message: `${current} ne répond pas, mais ${best} oui. Mets MISTRAL_MODEL=${best} sur Vercel puis redéploie.` };
 }

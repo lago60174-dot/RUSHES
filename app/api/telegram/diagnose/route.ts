@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { getOwnerUserId } from "@/lib/sync";
 import { isOwner } from "@/lib/owner";
 import { tg, sendMessage, getOwnerChatId } from "@/lib/telegram";
-import { agentProvider, mistralModel, probeMistralModel, MISTRAL_DEFAULT_MODEL } from "@/lib/llm";
+import { agentProvider, mistralModel, probeMistralModel, MISTRAL_FALLBACK_CHAIN } from "@/lib/llm";
 import {
   type Check, type ProbeResult, type WebhookInfo,
   checkEnv, interpretGetMe, interpretWebhookInfo, interpretProbe,
@@ -96,11 +96,20 @@ export async function GET(request: Request) {
     const model = mistralModel();
     const main = await probeMistralModel(model);
     const isTier = main.status === 403 && /tier_not_allowed|subscription tier/i.test(main.body ?? "");
+    const zero = main.status === 429 && main.headers?.["x-ratelimit-limit-req-minute"] === "0";
     // 401 (ou 403 hors forfait) = clé en cause ; tout autre statut prouve que la clé est acceptée.
     const keyStatus = main.status === null ? null : (main.status === 401 || (main.status === 403 && !isTier)) ? main.status : 200;
     checks.push(interpretLlmKey("mistral", keyStatus, main.error));
-    const fallback = isTier && model !== MISTRAL_DEFAULT_MODEL ? await probeMistralModel(MISTRAL_DEFAULT_MODEL) : undefined;
-    checks.push(interpretLlmModel(model, main, fallback));
+    // Modèle indisponible : on cherche, dans la chaîne de repli de l'app, le premier qui répond.
+    let fallback: Awaited<ReturnType<typeof probeMistralModel>> | undefined;
+    let fallbackModel: string | undefined;
+    if (isTier || zero) {
+      for (const m of MISTRAL_FALLBACK_CHAIN.filter((x) => x !== model)) {
+        const pr = await probeMistralModel(m, { retries: 0 });
+        if (pr.status !== null && pr.status >= 200 && pr.status < 300) { fallback = pr; fallbackModel = m; break; }
+      }
+    }
+    checks.push(interpretLlmModel(model, main, fallback, fallbackModel));
   } else if (provider === "anthropic") {
     try {
       const r = await fetch("https://api.anthropic.com/v1/models", { headers: { "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01" }, signal: AbortSignal.timeout(8000) });
