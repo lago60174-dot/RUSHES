@@ -10,6 +10,11 @@ type Report = {
   context: { webhookUrlExpected: string; environment: string; commit: string | null; checkedAt: string };
 };
 
+type Scan = {
+  current: string; listError: string | null; level: "ok" | "warn" | "fail"; message: string; recommended: string | null;
+  results: Array<{ model: string; status: number | null; ok: boolean; verdict: string }>;
+};
+
 const ICON: Record<Check["status"], string> = { ok: "✅", warn: "⚠️", fail: "❌", skip: "➖" };
 const TONE = {
   ok: { bg: C.emeraldBg, fg: C.emerald },
@@ -23,6 +28,7 @@ export default function DiagnosticPage() {
   const [error, setError] = useState("");
   const [setupResult, setSetupResult] = useState("");
   const [copied, setCopied] = useState(false);
+  const [scan, setScan] = useState<Scan | null>(null);
 
   const run = useCallback(async (send = false) => {
     setBusy(send ? "send" : "check");
@@ -56,6 +62,21 @@ export default function DiagnosticPage() {
     await run();
   }
 
+  async function scanModels() {
+    setBusy("scan");
+    setError("");
+    try {
+      const res = await fetch("/api/telegram/diagnose/models", { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
+      setScan(data);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function copyReport() {
     if (!report) return;
     const lines = [
@@ -63,6 +84,7 @@ export default function DiagnosticPage() {
       report.headline,
       "",
       ...report.checks.map((c) => `${ICON[c.status]} ${c.label} — ${c.detail}${c.fix ? ` → ${c.fix}` : ""}`),
+      ...(scan ? ["", `Recherche de modèle Mistral : ${scan.message}`, ...scan.results.map((r) => `${r.ok ? "✅" : "❌"} ${r.model} — ${r.verdict}`)] : []),
     ];
     await navigator.clipboard.writeText(lines.join("\n")).catch(() => {});
     setCopied(true);
@@ -95,6 +117,9 @@ export default function DiagnosticPage() {
           <button style={btn} disabled={busy !== null} onClick={() => run(true)}>
             {busy === "send" ? "Envoi…" : "Envoyer un message test"}
           </button>
+          <button style={btn} disabled={busy !== null} onClick={scanModels}>
+            {busy === "scan" ? "Test des modèles…" : "Chercher un modèle qui marche"}
+          </button>
           <button style={btn} disabled={!report} onClick={copyReport}>
             {copied ? "Copié ✓" : "Copier le rapport"}
           </button>
@@ -105,6 +130,24 @@ export default function DiagnosticPage() {
         )}
         {setupResult && (
           <div style={{ background: C.surfaceAlt, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, marginBottom: 14, fontSize: "0.85rem", wordBreak: "break-word" }}>{setupResult}</div>
+        )}
+
+        {scan && (
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: "14px 16px", marginBottom: 14 }}>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>{ICON[scan.level]} Modèles Mistral testés</div>
+            <div style={{ fontSize: "0.85rem", color: C.textSecondary, marginBottom: 10, wordBreak: "break-word" }}>{scan.message}</div>
+            {scan.results.map((r) => (
+              <div key={r.model} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "0.85rem", padding: "5px 0", borderTop: `1px solid ${C.border}` }}>
+                <span style={{ fontFamily: "monospace", wordBreak: "break-all" }}>{r.ok ? "✅" : "❌"} {r.model}{r.model === scan.current ? " (actuel)" : ""}</span>
+                <span style={{ color: r.ok ? C.emerald : C.textSecondary, textAlign: "right" }}>{r.verdict}</span>
+              </div>
+            ))}
+            {scan.recommended && scan.recommended !== scan.current && (
+              <div style={{ marginTop: 10, fontSize: "0.85rem", background: C.surfaceAlt, borderRadius: 8, padding: "8px 10px" }}>
+                👉 Sur Vercel, ajoute <b>MISTRAL_MODEL={scan.recommended}</b> puis redéploie.
+              </div>
+            )}
+          </div>
         )}
 
         {report && tone && (

@@ -32,7 +32,7 @@ const gapMs = () => {
 };
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 let nextSlot = 0;
-async function waitForSlot() {
+export async function mistralWaitSlot() {
   // Réservation atomique d'un créneau : des appels simultanés se font la queue.
   const slot = Math.max(Date.now(), nextSlot);
   nextSlot = slot + gapMs();
@@ -46,17 +46,18 @@ async function waitForSlot() {
 export async function mistralPost(
   payload: Record<string, unknown>,
   model = mistralModel(),
-  opts: { fallback?: boolean } = {},
+  opts: { fallback?: boolean; retries?: number } = {},
 ): Promise<Response> {
+  const maxRetries = opts.retries ?? mistralPacing.retries;
   const send = async (m: string): Promise<Response> => {
     for (let attempt = 0; ; attempt++) {
-      await waitForSlot();
+      await mistralWaitSlot();
       const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", Authorization: `Bearer ${process.env.MISTRAL_API_KEY}` },
         body: JSON.stringify({ ...payload, model: m }),
       });
-      if (res.status !== 429 || attempt >= mistralPacing.retries) return res;
+      if (res.status !== 429 || attempt >= maxRetries) return res;
       const retryAfter = Number(res.headers?.get("retry-after"));
       await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 8000) : mistralPacing.retryBaseMs * (attempt + 1));
     }
@@ -73,9 +74,34 @@ export async function mistralPost(
   return res;
 }
 
+// ── Sondes (diagnostic) ───────────────────────────────────────────────
+export type ModelProbe = { status: number | null; body?: string; error?: string; headers?: Record<string, string> };
+
+// Requête réelle d'1 jeton sur un modèle, SANS repli automatique, pour savoir
+// fidèlement si CE modèle passe. Renvoie aussi les en-têtes de limite de Mistral.
+export async function probeMistralModel(model: string, opts: { retries?: number } = {}): Promise<ModelProbe> {
+  try {
+    const res = await mistralPost({ max_tokens: 1, messages: [{ role: "user", content: "ping" }] }, model, { fallback: false, retries: opts.retries });
+    const headers: Record<string, string> = {};
+    res.headers?.forEach?.((v, k) => { if (/ratelimit|retry-after/i.test(k)) headers[k] = v; });
+    return { status: res.status, body: res.ok ? undefined : (await res.text().catch(() => "")).slice(0, 300), headers };
+  } catch (e) {
+    return { status: null, error: (e as Error).message };
+  }
+}
+
+export type MistralModelInfo = { id: string; capabilities?: Record<string, boolean>; deprecation?: string | null };
+export async function mistralListModels(): Promise<MistralModelInfo[]> {
+  await mistralWaitSlot();
+  const res = await fetch("https://api.mistral.ai/v1/models", { headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY}` }, signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error(`Mistral ${res.status}`);
+  const data = await res.json() as { data?: MistralModelInfo[] };
+  return data.data ?? [];
+}
+
 // Message lisible pour l'utilisateur (Telegram) à partir d'une erreur LLM brute.
 export function friendlyLlmError(message: string): string | null {
-  if (/\b429\b|rate.?limit/i.test(message)) return "Mistral limite le nombre de requêtes (forfait gratuit : environ 1 par seconde). J'ai déjà réessayé plusieurs fois : attends une dizaine de secondes puis renvoie ton message.";
+  if (/\b429\b|rate.?limit/i.test(message)) return "Mistral limite le nombre de requêtes (forfait gratuit : environ 1 par seconde). J'ai déjà réessayé plusieurs fois : attends une dizaine de secondes puis renvoie ton message. Si ça dure, ouvre /diagnostic et clique sur « Chercher un modèle qui marche ».";
   if (/tier_not_allowed|subscription tier/i.test(message)) return "Ton forfait Mistral n'autorise pas ce modèle. Mets MISTRAL_MODEL=mistral-small-latest sur Vercel puis redéploie.";
   if (/(Mistral|Anthropic)( error)? 40[13]\b/.test(message)) return "La clé IA est refusée. Vérifie MISTRAL_API_KEY sur Vercel (clé valide, sans espace) puis redéploie.";
   if (/(Mistral|Anthropic)( error)? 5\d\d\b/.test(message)) return "Le service IA a un souci de son côté. Réessaie dans un instant.";

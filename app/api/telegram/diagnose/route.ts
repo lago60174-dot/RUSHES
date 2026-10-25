@@ -4,11 +4,11 @@ import { createSupabaseAdminClient } from "@/lib/supabase-admin";
 import { getOwnerUserId } from "@/lib/sync";
 import { isOwner } from "@/lib/owner";
 import { tg, sendMessage, getOwnerChatId } from "@/lib/telegram";
-import { agentProvider, mistralModel, mistralPost, MISTRAL_DEFAULT_MODEL } from "@/lib/llm";
+import { agentProvider, mistralModel, probeMistralModel, MISTRAL_DEFAULT_MODEL } from "@/lib/llm";
 import {
   type Check, type ProbeResult, type WebhookInfo,
   checkEnv, interpretGetMe, interpretWebhookInfo, interpretProbe,
-  interpretTables, interpretOwnerUser, interpretSend, interpretLlmKey, interpretLlmModel, type ModelProbe, summarize, webhookUrlFor,
+  interpretTables, interpretOwnerUser, interpretSend, interpretLlmKey, interpretLlmModel, summarize, webhookUrlFor,
 } from "@/lib/telegram-diagnose";
 
 export const maxDuration = 30;
@@ -21,18 +21,6 @@ const ORDER = [
   "env.owner", "db.tables", "db.owner", "env.email",
   "env.llm", "llm.key", "llm.model", "env.stt", "env.r2", "send",
 ];
-
-// Appel réel d'1 jeton : seule façon de savoir si le forfait autorise le modèle.
-// Passe par mistralPost (cadence + retry 429) SANS repli automatique, pour
-// rapporter fidèlement l'état du modèle demandé.
-async function mistralModelProbe(model: string): Promise<ModelProbe> {
-  try {
-    const res = await mistralPost({ max_tokens: 1, messages: [{ role: "user", content: "ping" }] }, model, { fallback: false });
-    return { status: res.status, body: res.ok ? undefined : (await res.text().catch(() => "")).slice(0, 300) };
-  } catch (e) {
-    return { status: null, error: (e as Error).message };
-  }
-}
 
 async function probe(url: string, secret: string): Promise<ProbeResult> {
   try {
@@ -106,12 +94,12 @@ export async function GET(request: Request) {
   const provider = agentProvider();
   if (provider === "mistral") {
     const model = mistralModel();
-    const main = await mistralModelProbe(model);
+    const main = await probeMistralModel(model);
     const isTier = main.status === 403 && /tier_not_allowed|subscription tier/i.test(main.body ?? "");
     // 401 (ou 403 hors forfait) = clé en cause ; tout autre statut prouve que la clé est acceptée.
     const keyStatus = main.status === null ? null : (main.status === 401 || (main.status === 403 && !isTier)) ? main.status : 200;
     checks.push(interpretLlmKey("mistral", keyStatus, main.error));
-    const fallback = isTier && model !== MISTRAL_DEFAULT_MODEL ? await mistralModelProbe(MISTRAL_DEFAULT_MODEL) : undefined;
+    const fallback = isTier && model !== MISTRAL_DEFAULT_MODEL ? await probeMistralModel(MISTRAL_DEFAULT_MODEL) : undefined;
     checks.push(interpretLlmModel(model, main, fallback));
   } else if (provider === "anthropic") {
     try {
