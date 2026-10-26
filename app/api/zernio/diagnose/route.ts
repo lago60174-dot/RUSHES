@@ -2,17 +2,17 @@ import { NextResponse } from "next/server";
 import { createHmac } from "crypto";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { isOwner } from "@/lib/owner";
-import { zernioListAccounts, zernioListProfiles, zernioListWebhooks, zernioTestWebhook, type ZernioWebhook } from "@/lib/zernio";
+import { zernioListAccounts, zernioListProfiles, zernioListWebhooks, zernioTestWebhook, zernioWebhookLogs, type ZernioWebhook } from "@/lib/zernio";
 import { summarize, type Check } from "@/lib/telegram-diagnose";
 import {
   checkZernioEnv, interpretZernioAccounts, interpretZernioProfile, interpretZernioWebhooks,
-  interpretSignedProbe, interpretZernioTest, zernioWebhookUrlFor, type SignedProbe,
+  interpretSignedProbe, interpretZernioTest, interpretZernioLogs, zernioWebhookUrlFor, type SignedProbe,
 } from "@/lib/zernio-diagnose";
 
 export const maxDuration = 30;
 export const dynamic = "force-dynamic";
 
-const ORDER = ["z.env.key", "z.env.secret", "z.api", "z.profile", "z.webhook", "z.probe", "z.test"];
+const ORDER = ["z.env.key", "z.env.secret", "z.api", "z.profile", "z.webhook", "z.probe", "z.test", "z.logs"];
 
 // GET /api/zernio/diagnose            → contrôle complet (lecture seule)
 // GET /api/zernio/diagnose?test=1     → idem + demande à Zernio d'envoyer un webhook.test
@@ -65,6 +65,10 @@ export async function GET(request: Request) {
     } else {
       checks.push(interpretZernioTest(null));
     }
+
+    // Ce que ton app a répondu à Zernio (après le test, pour qu'il y apparaisse)
+    try { checks.push(interpretZernioLogs(await zernioWebhookLogs(8), expected)); }
+    catch { checks.push(interpretZernioLogs(null, expected)); }
   }
 
   // Test interne : faux webhook.test signé avec TON secret, envoyé à ta propre URL publique

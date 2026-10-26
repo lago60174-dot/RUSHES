@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { isOwner } from "@/lib/owner";
-import { isR2Configured, r2PutObject, r2DeleteObject, r2PublicUrl } from "@/lib/r2";
+import { isR2Configured, r2PutObject, r2DeleteObject, r2PublicUrl, r2ProbeAccess } from "@/lib/r2";
 import { summarize, type Check } from "@/lib/telegram-diagnose";
 import { checkR2Env, interpretR2Put, interpretR2Public, interpretR2Cleanup, toFailure } from "@/lib/r2-diagnose";
 
@@ -31,7 +31,11 @@ export async function GET() {
       written = true;
       checks.push(interpretR2Put({ ok: true }, bucket));
     } catch (e) {
-      checks.push(interpretR2Put({ ok: false, failure: toFailure(e) }, bucket));
+      const failure = toFailure(e);
+      // Écriture refusée : on regarde ce que le jeton PEUT faire (lecture, compartiments visibles).
+      const denied = /AccessDenied|Access Denied/i.test(`${failure.code} ${failure.message}`) || failure.status === 403;
+      const access = denied ? await r2ProbeAccess().catch(() => undefined) : undefined;
+      checks.push(interpretR2Put({ ok: false, failure }, bucket, access));
     }
 
     if (written) {

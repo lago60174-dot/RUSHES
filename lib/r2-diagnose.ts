@@ -71,7 +71,9 @@ export function checkR2Env(env: Record<string, string | undefined>): Check[] {
 }
 
 // ── 2. Écriture réelle d'un petit fichier ──────────────────────────────
-export function interpretR2Put(res: { ok: true } | { ok: false; failure: R2Failure }, bucket: string): Check {
+export type R2Access = { read: "ok" | "denied" | "missing" | "error"; buckets: string[] | null };
+
+export function interpretR2Put(res: { ok: true } | { ok: false; failure: R2Failure }, bucket: string, access?: R2Access): Check {
   const label = "Écriture dans le bucket (test réel)";
   if (!("failure" in res)) return { id: "r2.put", label, status: "ok", detail: `Un fichier de test a été écrit dans « ${bucket} ».` };
   const { code = "", status, message } = res.failure;
@@ -84,10 +86,21 @@ export function interpretR2Put(res: { ok: true } | { ok: false; failure: R2Failu
     return { id: "r2.put", label, status: "fail", detail: `Le compartiment « ${bucket} » n'existe pas dans ce compte Cloudflare (ou R2_ACCOUNT_ID est d'un autre compte).`, fix: "Compare R2_BUCKET avec la liste de tes compartiments dans R2, lettre pour lettre, et vérifie R2_ACCOUNT_ID." };
   }
   if (/AccessDenied|Access Denied/i.test(blob) || status === 403) {
+    const newToken = "Cloudflare > R2 > Gérer les jetons API > Créer un jeton > « Lecture et écriture d'objets » > « Appliquer à tous les compartiments » > recopie le nouvel ID de clé d'accès ET la nouvelle clé secrète dans Vercel (R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY), puis redéploie.";
+    // Verdict précis grâce à la sonde de lecture / liste des compartiments.
+    if (access?.read === "ok") {
+      return { id: "r2.put", label, status: "fail", detail: `Ton jeton peut LIRE « ${bucket} » mais pas y écrire : il a été créé en « Lecture seule » (Object Read only).`, fix: `Il faut un jeton « Lecture et écriture d'objets ». ${newToken}` };
+    }
+    if (access && access.buckets && access.buckets.length > 0 && !access.buckets.includes(bucket)) {
+      return { id: "r2.put", label, status: "fail", detail: `Ton jeton ne voit pas le compartiment « ${bucket} ». Compartiments visibles avec ce jeton : ${access.buckets.map((b) => `« ${b} »`).join(", ")}.`, fix: `Soit mets R2_BUCKET sur l'un d'eux, soit crée un jeton qui couvre « ${bucket} ». ${newToken}` };
+    }
+    if (access && access.read === "denied") {
+      return { id: "r2.put", label, status: "fail", detail: `Ton jeton n'a AUCUN droit (ni lecture ni écriture) sur « ${bucket} » : il est limité à un autre compartiment, ou ne couvre pas celui-ci.`, fix: newToken };
+    }
     return {
       id: "r2.put", label, status: "fail",
       detail: `Cloudflare refuse l'écriture dans « ${bucket} » (403 Access Denied). Tes clés sont reconnues, mais ce jeton n'a pas le droit d'écrire ICI.`,
-      fix: "Les 3 causes possibles : (1) le jeton est en « Lecture seule » : il faut « Lecture et écriture d'objets » ; (2) le jeton est limité à un AUTRE compartiment que « " + bucket + " » ; (3) R2_BUCKET ne correspond pas au compartiment autorisé. Le plus simple : Cloudflare > R2 > Gérer les jetons API > Créer un jeton > « Lecture et écriture d'objets » > « Appliquer à tous les compartiments » (ou à celui-ci) > recopie le nouvel ID et la nouvelle clé secrète dans Vercel, puis redéploie.",
+      fix: `Causes possibles : jeton en lecture seule, limité à un autre compartiment, ou R2_BUCKET différent du compartiment autorisé. ${newToken}`,
     };
   }
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo|fetch failed|ECONN|ETIMEDOUT/i.test(blob)) {

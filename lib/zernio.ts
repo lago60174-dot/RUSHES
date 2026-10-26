@@ -888,7 +888,7 @@ export async function zernioGetPostComments(postId: string, accountId: string): 
 }
 
 // ── Webhooks configurés dans le compte Zernio (diagnostic) ──────────────
-// GET /v1/webhooks/settings  et  POST /v1/webhooks/test {webhook_id}.
+// GET /v1/webhooks/settings  et  POST /v1/webhooks/test { webhookId } (camelCase, doc officielle).
 // Lecture tolérante : la forme exacte de la liste n'est pas figée dans la doc
 // publique que j'ai pu consulter, on accepte un tableau nu ou { webhooks: [...] }.
 export type ZernioWebhook = { id: string; name?: string; url: string; events: string[]; isActive: boolean; failureCount: number };
@@ -916,7 +916,32 @@ export async function zernioTestWebhook(webhookId: string): Promise<{ status: nu
   const res = await fetch(`${ZERNIO_BASE}/webhooks/test`, {
     method: "POST",
     headers: zernioHeaders(),
-    body: JSON.stringify({ webhook_id: webhookId }),
+    body: JSON.stringify({ webhookId }),
   });
   return { status: res.status, body: (await res.text().catch(() => "")).slice(0, 500), requestId: res.headers.get("x-request-id") };
+}
+
+// ── Journal des livraisons (GET /v1/webhooks/logs) ──────────────────────
+// Chaque tentative d'envoi de Zernio vers ton app, avec l'URL appelée et le
+// code de réponse reçu. C'est LA source pour savoir ce que ton app a répondu.
+export type ZernioWebhookLog = {
+  webhookName?: string; event: string; test: boolean; url: string; status: "success" | "failed" | string;
+  statusCode: number | null; responseBody?: string; errorMessage?: string; attemptNumber?: number; createdAt?: string;
+};
+export async function zernioWebhookLogs(limit = 8): Promise<ZernioWebhookLog[]> {
+  const res = await fetch(`${ZERNIO_BASE}/webhooks/logs?limit=${limit}`, { headers: zernioHeaders() });
+  if (!res.ok) throw new Error(`Zernio webhook logs error: ${res.status}`);
+  const data = await res.json().catch(() => null) as { logs?: Array<Record<string, unknown>> } | null;
+  return (data?.logs ?? []).map((l) => ({
+    webhookName: typeof l.webhookName === "string" ? l.webhookName : undefined,
+    event: String(l.event ?? ""),
+    test: l.test === true,
+    url: String(l.url ?? ""),
+    status: String(l.status ?? ""),
+    statusCode: typeof l.statusCode === "number" ? l.statusCode : null,
+    responseBody: typeof l.responseBody === "string" ? l.responseBody.slice(0, 200) : undefined,
+    errorMessage: typeof l.errorMessage === "string" ? l.errorMessage : undefined,
+    attemptNumber: typeof l.attemptNumber === "number" ? l.attemptNumber : undefined,
+    createdAt: typeof l.createdAt === "string" ? l.createdAt : undefined,
+  }));
 }

@@ -1,6 +1,6 @@
 // Logique pure du diagnostic Zernio (aucun appel réseau, testable).
 import type { Check } from "@/lib/telegram-diagnose";
-import type { ZernioWebhook } from "@/lib/zernio";
+import type { ZernioWebhook, ZernioWebhookLog } from "@/lib/zernio";
 
 export const zernioWebhookUrlFor = (base: string) => `${base.replace(/\/+$/, "")}/api/zernio/webhook`;
 
@@ -91,16 +91,50 @@ export function interpretSignedProbe(p: SignedProbe, url: string): Check {
 }
 
 // ── Test envoyé PAR Zernio (bouton) ─────────────────────────────────────
+// Doc Zernio : « A 500 from the test call means your endpoint did not answer 2xx ».
 export function interpretZernioTest(r: { status: number; body: string; requestId: string | null } | null): Check {
   const label = "Test envoyé par Zernio à ton webhook";
   if (r === null) return { id: "z.test", label, status: "skip", detail: "Non lancé. Clique sur « Envoyer un test Zernio »." };
-  if (r.status >= 200 && r.status < 300) return { id: "z.test", label, status: "ok", detail: "Zernio a livré le test et ton app a répondu correctement." };
+  if (r.status >= 200 && r.status < 300) return { id: "z.test", label, status: "ok", detail: "Zernio a envoyé le test et ton app a répondu 2xx." };
   let msg = r.body;
-  try { const j = JSON.parse(r.body) as { error?: string; code?: string }; msg = [j.code, j.error].filter(Boolean).join(" — ") || r.body; } catch { /* corps non JSON */ }
+  try { const j = JSON.parse(r.body) as { error?: string; code?: string; message?: string }; msg = [j.code, j.error ?? j.message].filter(Boolean).join(" — ") || r.body; } catch { /* corps non JSON */ }
   const rid = r.requestId ? ` (Request ID ${r.requestId})` : "";
+  if (r.status === 500) {
+    return {
+      id: "z.test", label, status: "fail",
+      detail: `Zernio a bien envoyé le test, mais ton endpoint n'a PAS répondu 2xx${rid} : « ${msg || "Test webhook failed"} ».`,
+      fix: "Regarde « Dernières livraisons Zernio » juste en dessous : elle montre l'URL appelée et le code renvoyé. Un 404 = mauvaise URL dans Zernio ; un 401 = secret différent ; un 5xx = erreur dans ton app.",
+    };
+  }
+  if (r.status === 400) {
+    return { id: "z.test", label, status: "fail", detail: `Zernio refuse la demande de test (400)${rid} : ${msg}`, fix: "Problème de ma requête de test, pas de ton app : signale-le." };
+  }
+  return { id: "z.test", label, status: "fail", detail: `Zernio répond ${r.status}${rid} : ${msg || "(corps vide)"}`, fix: "Vérifie la clé API (droits « webhooks ») et que ce webhook existe dans ce compte Zernio." };
+}
+
+// ── Journal : ce que TON app a répondu à Zernio ─────────────────────────
+export function interpretZernioLogs(logs: ZernioWebhookLog[] | null, expectedUrl: string): Check {
+  const label = "Dernières livraisons Zernio vers ton app";
+  const norm = (u: string) => u.trim().replace(/\/+$/, "");
+  if (logs === null) return { id: "z.logs", label, status: "skip", detail: "Journal indisponible (droits de la clé API ?)." };
+  if (logs.length === 0) return { id: "z.logs", label, status: "skip", detail: "Aucune livraison enregistrée sur 30 jours : aucun évènement n'a été envoyé à ton app depuis ce compte." };
+
+  const short = (l: ZernioWebhookLog) => `${l.event || "?"}${l.test ? " (test)" : ""} → ${l.url || "?"} : ${l.statusCode ?? "pas de réponse"}${l.status === "success" ? " ✔" : " ✘"}${l.errorMessage ? ` (${l.errorMessage})` : ""}`;
+  const lines = logs.slice(0, 5).map(short).join(" | ");
+  const last = logs[0];
+
+  if (last.status === "success") return { id: "z.logs", label, status: "ok", detail: `Dernière livraison réussie. ${lines}` };
+
+  const wrongUrl = norm(last.url) !== norm(expectedUrl);
+  const hint =
+    last.statusCode === 404 ? (wrongUrl ? `Zernio appelle ${last.url} qui n'existe pas : l'URL du webhook est fausse.` : "La route n'existe pas sur ce déploiement.") :
+    last.statusCode === 401 || last.statusCode === 403 ? "Ton app rejette la signature (ou Vercel bloque) : le secret du webhook Zernio diffère de ZERNIO_WEBHOOK_SECRET, ou le déploiement n'a pas été refait." :
+    last.statusCode !== null && last.statusCode >= 500 ? "Erreur dans ton app : regarde les logs Vercel de /api/zernio/webhook." :
+    last.statusCode === null ? "Aucune réponse : URL injoignable, domaine inconnu ou délai de 5 secondes dépassé." :
+    "Réponse non 2xx.";
   return {
-    id: "z.test", label, status: "fail",
-    detail: `Zernio répond ${r.status}${rid} : ${msg || "(corps vide)"}`,
-    fix: "Compare avec le test interne : s'il est vert, ton app va bien et le souci est côté Zernio ou dans son URL/secret ; communique alors le Request ID au support Zernio. S'il est rouge, corrige-le d'abord.",
+    id: "z.logs", label, status: "fail",
+    detail: `${hint} ${lines}${last.responseBody ? ` — réponse de ton app : « ${last.responseBody} »` : ""}`,
+    fix: wrongUrl ? `Dans Zernio > Webhooks, mets l'URL exacte : ${expectedUrl}` : undefined,
   };
 }

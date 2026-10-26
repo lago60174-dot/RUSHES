@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, ListBucketsCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomUUID } from "crypto";
 
@@ -94,4 +94,32 @@ export async function r2PutObject(params: {
 
 export async function r2DeleteObject(key: string) {
   await getClient().send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: key }));
+}
+
+// Sonde de diagnostic : que PEUT faire ce jeton ? Permet de distinguer un jeton
+// en lecture seule (lecture OK, écriture refusée) d'un jeton limité à un autre
+// compartiment (rien d'autorisé ici). Ne modifie rien.
+export type R2AccessProbe = {
+  read: "ok" | "denied" | "missing" | "error";
+  readMessage?: string;
+  buckets: string[] | null; // compartiments visibles par le jeton (null = liste interdite)
+};
+export async function r2ProbeAccess(): Promise<R2AccessProbe> {
+  const c = getClient();
+  let read: R2AccessProbe["read"] = "ok";
+  let readMessage: string | undefined;
+  try {
+    await c.send(new ListObjectsV2Command({ Bucket: process.env.R2_BUCKET!, MaxKeys: 1 }));
+  } catch (e) {
+    const err = e as { name?: string; Code?: string; message?: string; $metadata?: { httpStatusCode?: number } };
+    const code = err.Code ?? err.name ?? "";
+    readMessage = err.message;
+    read = /AccessDenied/i.test(code) || err.$metadata?.httpStatusCode === 403 ? "denied" : /NoSuchBucket/i.test(code) || err.$metadata?.httpStatusCode === 404 ? "missing" : "error";
+  }
+  let buckets: string[] | null = null;
+  try {
+    const res = await c.send(new ListBucketsCommand({}));
+    buckets = (res.Buckets ?? []).map((b) => b.Name ?? "").filter(Boolean);
+  } catch { /* liste interdite pour ce type de jeton : normal */ }
+  return { read, readMessage, buckets };
 }
