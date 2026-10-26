@@ -83,6 +83,13 @@ export async function POST(request: Request) {
 
   const event = (body.event || body.type) as string | undefined;
 
+  // Test envoyé depuis Zernio (bouton « Test webhook » / POST /v1/webhooks/test).
+  // Signature déjà vérifiée ci-dessus : on répond 2xx tout de suite, sans toucher
+  // à la base, pour que le test ne dépende que de l'URL et du secret.
+  if (event === "webhook.test") {
+    return NextResponse.json({ ok: true, test: true });
+  }
+
   // account.disconnected n'est pas rattaché à un post — à traiter à part,
   // avant le early-return "pas de post" ci-dessous qui l'ignorerait sinon.
   // ✅ Champs confirmés mot pour mot dans le changelog docs.zernio.com :

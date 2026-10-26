@@ -886,3 +886,37 @@ export async function zernioGetPostComments(postId: string, accountId: string): 
     })
     .filter((c) => c.id && c.text);
 }
+
+// ── Webhooks configurés dans le compte Zernio (diagnostic) ──────────────
+// GET /v1/webhooks/settings  et  POST /v1/webhooks/test {webhook_id}.
+// Lecture tolérante : la forme exacte de la liste n'est pas figée dans la doc
+// publique que j'ai pu consulter, on accepte un tableau nu ou { webhooks: [...] }.
+export type ZernioWebhook = { id: string; name?: string; url: string; events: string[]; isActive: boolean; failureCount: number };
+
+export async function zernioListWebhooks(): Promise<ZernioWebhook[]> {
+  const res = await fetch(`${ZERNIO_BASE}/webhooks/settings`, { headers: zernioHeaders() });
+  if (!res.ok) throw new Error(`Zernio webhooks error: ${res.status}`);
+  const data = await res.json().catch(() => null) as unknown;
+  const d = data as { webhooks?: unknown; data?: unknown } | null;
+  const arr = (Array.isArray(data) ? data : Array.isArray(d?.webhooks) ? d?.webhooks : Array.isArray(d?.data) ? d?.data : []) as Array<Record<string, unknown>>;
+  return arr.map((w) => ({
+    id: String(w._id ?? w.id ?? ""),
+    name: typeof w.name === "string" ? w.name : undefined,
+    url: String(w.url ?? ""),
+    events: Array.isArray(w.events) ? (w.events as string[]) : [],
+    isActive: w.isActive !== false,
+    failureCount: Number(w.consecutiveFailures ?? w.failureCount ?? 0) || 0,
+  }));
+}
+
+// Demande à Zernio d'envoyer un évènement « webhook.test » à ton URL. On
+// renvoie le statut ET le corps de la réponse de Zernio (le dashboard ne
+// montre pas ce corps, qui contient le code d'erreur exact).
+export async function zernioTestWebhook(webhookId: string): Promise<{ status: number; body: string; requestId: string | null }> {
+  const res = await fetch(`${ZERNIO_BASE}/webhooks/test`, {
+    method: "POST",
+    headers: zernioHeaders(),
+    body: JSON.stringify({ webhook_id: webhookId }),
+  });
+  return { status: res.status, body: (await res.text().catch(() => "")).slice(0, 500), requestId: res.headers.get("x-request-id") };
+}
