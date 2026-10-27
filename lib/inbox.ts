@@ -344,3 +344,35 @@ export async function pollRecentComments(db: Db, userId: string, maxPosts = 20) 
   }
   return { newItems, errors };
 }
+
+// ── Reprise des éléments bloqués ───────────────────────────────────────
+// Si l'IA échoue pendant le tri (quota, panne…), l'élément reste en « new » avec une
+// erreur. Sans reprise il y serait OUBLIÉ pour toujours : ni réponse, ni validation.
+// À chaque passage du cron, on retente les plus anciens ; si le tri échoue toujours au
+// bout de 24 h, on le passe en « à valider » (sans brouillon) pour que tu le voies.
+export async function retryStuckItems(
+  db: Db, userId: string,
+  deps: { max?: number; triage?: typeof triageItem; notify?: typeof notifyTelegramApproval; now?: number } = {},
+) {
+  const { max = 8, triage = triageItem, notify = notifyTelegramApproval, now = Date.now() } = deps;
+  const settings = await getInboxSettings(db, userId);
+  if (!settings.enabled || !isLlmConfigured()) return { retried: 0, escalated: 0, stuck: 0 };
+
+  const since = new Date(now - 14 * 86400_000).toISOString();
+  const { data } = await db.from("inbox_items").select("id, received_at")
+    .eq("user_id", userId).eq("direction", "incoming").eq("status", "new")
+    .gte("received_at", since).order("received_at", { ascending: true }).limit(max);
+
+  let retried = 0, escalated = 0;
+  for (const it of data ?? []) {
+    const ageH = (now - new Date(it.received_at as string).getTime()) / 3600_000;
+    const r = await triage(db, userId, it.id as string);
+    retried += 1;
+    if (r.action === "error" && ageH > 24) {
+      await db.from("inbox_items").update({ status: "pending_approval" }).eq("id", it.id as string);
+      await notify(db, it.id as string).catch((e) => console.error("[telegram] approval:", (e as Error).message));
+      escalated += 1;
+    }
+  }
+  return { retried, escalated, stuck: (data ?? []).length };
+}

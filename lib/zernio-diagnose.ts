@@ -6,6 +6,8 @@ export const zernioWebhookUrlFor = (base: string) => `${base.replace(/\/+$/, "")
 
 // Évènements dont l'app dépend pour suivre tes publications.
 const CORE_EVENTS = ["post.scheduled", "post.published", "post.failed", "post.partial", "post.cancelled"];
+// Évènements dont dépend l'inbox (réponses aux commentaires et messages privés).
+export const INBOX_EVENTS = ["comment.received", "message.received", "message.sent"];
 
 // ── Variables ──────────────────────────────────────────────────────────
 export function checkZernioEnv(env: Record<string, string | undefined>): Check[] {
@@ -63,8 +65,12 @@ export function interpretZernioWebhooks(list: ZernioWebhook[], expectedUrl: stri
     return { id: "z.webhook", label, status: "fail", detail: "Le webhook existe mais il est DÉSACTIVÉ (Zernio désactive un webhook après des échecs de livraison répétés).", fix: "Réactive-le dans Zernio (isActive) après avoir corrigé la cause (secret, URL), puis relance un test." };
   }
   const missing = CORE_EVENTS.filter((e) => mine.events.length > 0 && !mine.events.includes(e));
-  if (missing.length > 0) {
-    return { id: "z.webhook", label, status: "warn", detail: `Webhook actif sur la bonne URL, mais il n'écoute pas : ${missing.join(", ")}.`, fix: "Ajoute ces évènements dans Zernio, sinon l'état de tes publications ne se mettra pas à jour." };
+  const missingInbox = INBOX_EVENTS.filter((e) => mine.events.length > 0 && !mine.events.includes(e));
+  if (missing.length > 0 || missingInbox.length > 0) {
+    const parts: string[] = [];
+    if (missing.length) parts.push(`l'état de tes publications (${missing.join(", ")})`);
+    if (missingInbox.length) parts.push(`l'inbox, c'est-à-dire les réponses aux commentaires et messages (${missingInbox.join(", ")})`);
+    return { id: "z.webhook", label, status: "warn", detail: `Webhook actif sur la bonne URL, mais il n'écoute pas ce qu'il faut pour ${parts.join(" ET ")}.`, fix: `Ajoute ces évènements au webhook dans Zernio. Sans ${missingInbox.length ? "comment.received / message.received" : "eux"}, l'app ne reçoit pas les commentaires en temps réel et jamais les messages privés.` };
   }
   if (mine.failureCount > 0) {
     return { id: "z.webhook", label, status: "warn", detail: `Webhook actif sur la bonne URL, mais Zernio compte ${mine.failureCount} échec(s) de livraison consécutif(s).`, fix: "Regarde le test interne ci-dessous : il montre ce que ton app répond." };

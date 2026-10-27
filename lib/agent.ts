@@ -6,6 +6,7 @@ import { sendReply, saveInboxSettings } from "@/lib/inbox";
 import { sendMessage } from "@/lib/telegram";
 import { extractFrames, fetchImageBase64, fmtTime } from "@/lib/vision";
 import { agentProvider, mistralModel, mistralPost } from "@/lib/llm";
+import { findUnverifiedClaim, GUARD_MESSAGE } from "@/lib/agent-guard";
 
 type Db = SupabaseClient;
 type Json = Record<string, unknown>;
@@ -185,8 +186,16 @@ VOIR ET ÉCOUTER
 - Pour un avis sur une vidéo, regarde : l'accroche des 2 premières secondes, le cadrage et la lisibilité, le rythme, le texte à l'écran, la clarté du message, l'appel à l'action. Termine par des idées concrètes (légende, hashtags, horaire). Appuie-toi sur ses vraies stats (get_video_stats, performance_overview) quand elles existent.
 - « Comment vont mes vidéos ? » : appelle performance_overview (et get_video_stats si utile), puis réponds en langage naturel : 2 ou 3 constats marquants et un conseil. Pas de déversement de chiffres.
 
+CE QUE TU PEUX ET NE PEUX PAS FAIRE (important)
+- Stockage : quand l'utilisateur t'envoie un fichier vidéo ici, l'APPLICATION l'enregistre elle-même sur son stockage Cloudflare R2 avant que tu le voies. Tu n'as AUCUN outil pour ajouter, téléverser ou déplacer un fichier. Si on te dit « ajoute ma vidéo sur R2 » sans fichier joint : appelle list_media ; si elle y est, confirme avec le nom donné par l'outil ; sinon dis qu'elle n'a pas été reçue et demande de la renvoyer ici comme fichier vidéo.
+- R2 = le stockage (Cloudflare). Zernio = la publication sur les réseaux. Ne les confonds jamais, et ne dis jamais qu'une vidéo est « dans Zernio » : elle n'y va qu'après publish_video.
+- Tu ne peux PAS modifier une vidéo (texte à l'écran, appel à l'action, musique, montage) : ne le propose jamais.
+- N'invente JAMAIS un identifiant (media_id, video_id, account_id) ni un nom de fichier : ils viennent uniquement des résultats d'outils ou du message de l'utilisateur.
+- Une action n'est faite que si un outil l'a confirmée dans CE tour. Sinon, dis « je ne l'ai pas fait », sans ✅. Ne décris pas ce que tu « vas » faire comme si c'était fait.
+- Commentaires et messages reçus sur ses réseaux : tu peux les consulter (list_inbox), y répondre (reply_inbox), les écarter (ignore_inbox) et régler le traitement automatique (set_inbox_settings).
+
 ACTIONS
-- N'utilise les outils que lorsqu'ils servent à quelque chose : jamais pour une simple discussion.
+- N'utilise les outils que lorsqu'ils servent à quelque chose : jamais pour une simple discussion. Dès qu'on parle d'une vidéo envoyée, d'un compte ou d'une stat, vérifie avec l'outil avant de répondre.
 - Quand il demande de publier, publie sans demander de confirmation supplémentaire. Sans heure donnée, publie immédiatement ; avec une heure, programme-la.
 - « Sur mon TikTok » et un seul compte TikTok : utilise-le. Plusieurs et ambigu : demande lequel (une seule question). Appelle list_accounts pour connaître les comptes.
 - Sans légende ni hashtags fournis, propose-en toi-même de bons à partir de son brief (et de ce que tu vois si tu as regardé la vidéo), puis publie. Jamais de lien ni de mention inventés.
@@ -201,10 +210,11 @@ type Msg = { role: "user" | "assistant"; content: string | Block[] | Array<Json>
 export type AgentInput = string | { text: string; images?: Array<{ mediaType: string; data: string }> };
 
 type HistoryMsg = { role: "user" | "assistant"; content: string };
+type Trace = { tools: string[]; outputs: string }; // outils réussis ce tour + leurs résultats (pour le garde)
 type AgentImage = { mediaType: string; data: string };
 
 // ── Fournisseur Anthropic (Claude) ─────────────────────────────────────
-async function anthropicLoop(db: Db, userId: string, chatId: number, history: HistoryMsg[], userText: string, images: AgentImage[]): Promise<string> {
+async function anthropicLoop(db: Db, userId: string, chatId: number, history: HistoryMsg[], userText: string, images: AgentImage[], trace: Trace): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY!;
   const messages: Msg[] = [...history];
   messages.push({
@@ -232,8 +242,10 @@ async function anthropicLoop(db: Db, userId: string, chatId: number, history: Hi
     for (const u of uses) {
       try {
         const out = await runTool(db, userId, chatId, u.name!, u.input ?? {});
-        // Un outil peut renvoyer des images (watch_video) : elles vont dans le tool_result tel quel.
         const blocks = (out as { __blocks?: Block[] } | null)?.__blocks;
+        trace.tools.push(u.name!);
+        trace.outputs += " " + (blocks ? blocks.filter((b) => b.type === "text").map((b) => b.text).join(" ") : trunc(out));
+        // Un outil peut renvoyer des images (watch_video) : elles vont dans le tool_result tel quel.
         results.push({ type: "tool_result", tool_use_id: u.id, content: blocks ?? trunc(out) });
       } catch (e) {
         results.push({ type: "tool_result", tool_use_id: u.id, is_error: true, content: (e as Error).message });
@@ -282,7 +294,7 @@ async function mistralChat(model: string, messages: MistralMsg[]): Promise<{ con
   return { content: msg.content, tool_calls: msg.tool_calls ?? [] };
 }
 
-async function mistralLoop(db: Db, userId: string, chatId: number, history: HistoryMsg[], userText: string, images: AgentImage[]): Promise<string> {
+async function mistralLoop(db: Db, userId: string, chatId: number, history: HistoryMsg[], userText: string, images: AgentImage[], trace: Trace): Promise<string> {
   const model = mistralModel();
   const messages: MistralMsg[] = [{ role: "system", content: SYSTEM() }, ...history];
   messages.push({
@@ -304,6 +316,8 @@ async function mistralLoop(db: Db, userId: string, chatId: number, history: Hist
         const args = typeof c.function.arguments === "string" ? JSON.parse(c.function.arguments || "{}") : (c.function.arguments ?? {});
         const out = await runTool(db, userId, chatId, c.function.name, args as Json);
         const blocks = (out as { __blocks?: Block[] } | null)?.__blocks;
+        trace.tools.push(c.function.name);
+        trace.outputs += " " + (blocks ? blocks.filter((b) => b.type === "text").map((b) => b.text).join(" ") : trunc(out));
         if (blocks) {
           content = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n") + "\n(Les images sont jointes dans le message suivant, dans l'ordre.)";
           for (const b of blocks) {
@@ -335,10 +349,18 @@ export async function runAgent(db: Db, userId: string, chatId: number, input: Ag
     .eq("user_id", userId).order("id", { ascending: false }).limit(30);
   const history: HistoryMsg[] = (past ?? []).reverse().map((m) => ({ role: m.role as "user" | "assistant", content: m.content as string }));
 
+  const trace: Trace = { tools: [], outputs: "" };
   let finalText = provider === "anthropic"
-    ? await anthropicLoop(db, userId, chatId, history, userText, images)
-    : await mistralLoop(db, userId, chatId, history, userText, images);
+    ? await anthropicLoop(db, userId, chatId, history, userText, images, trace)
+    : await mistralLoop(db, userId, chatId, history, userText, images, trace);
   if (!finalText) finalText = "Je n'ai pas réussi à terminer cette demande. Peux-tu reformuler ?";
+
+  // Filet de sécurité : jamais d'identifiant inventé ni d'action « faite » sans outil.
+  const verdict = findUnverifiedClaim({ answer: finalText, userText, history: history.map((h) => h.content), toolNames: trace.tools, toolOutputs: trace.outputs });
+  if (verdict) {
+    console.warn(`[agent] réponse corrigée (${verdict}) : ${finalText.slice(0, 200)}`);
+    finalText = GUARD_MESSAGE;
+  }
 
   await db.from("agent_messages").insert([
     { user_id: userId, role: "user", content: images.length ? `${userText} [image envoyée]` : userText },

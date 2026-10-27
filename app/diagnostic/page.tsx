@@ -22,10 +22,11 @@ const TONE = {
 };
 
 // Les trois diagnostics partagent le même format de rapport.
-type Section = "zernio" | "r2";
+type Section = "zernio" | "r2" | "inbox";
 const SECTIONS: Record<Section, { title: string; url: (test: boolean) => string }> = {
   zernio: { title: "Zernio", url: (test) => `/api/zernio/diagnose${test ? "?test=1" : ""}` },
   r2: { title: "Stockage R2", url: () => "/api/r2/diagnose" },
+  inbox: { title: "Inbox (commentaires et messages)", url: (retry) => `/api/inbox/diagnose${retry ? "?retry=1" : ""}` },
 };
 
 function CheckList({ checks }: { checks: Check[] }) {
@@ -163,6 +164,8 @@ export default function DiagnosticPage() {
         <div style={{ fontSize: "0.75rem", color: C.textMuted, margin: "0 0 6px", fontWeight: 700, letterSpacing: "0.04em" }}>SERVICES</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
           <button style={btn} disabled={!idle} onClick={() => runSection("r2")}>{busy === "r2" ? "Test R2…" : "Diagnostic stockage R2"}</button>
+          <button style={btn} disabled={!idle} onClick={() => runSection("inbox")}>{busy === "inbox" ? "Analyse de l'inbox…" : "Diagnostic inbox"}</button>
+          <button style={btn} disabled={!idle} onClick={() => runSection("inbox", true)}>{busy === "inbox-test" ? "Relance…" : "Relancer le tri"}</button>
           <button style={btn} disabled={!idle} onClick={() => runSection("zernio")}>{busy === "zernio" ? "Vérification Zernio…" : "Diagnostic Zernio"}</button>
           <button style={btn} disabled={!idle} onClick={() => runSection("zernio", true)}>{busy === "zernio-test" ? "Test en cours…" : "Envoyer un test Zernio"}</button>
           <button style={btn} disabled={!report} onClick={copyReport}>{copied ? "Copié ✓" : "Copier le rapport"}</button>

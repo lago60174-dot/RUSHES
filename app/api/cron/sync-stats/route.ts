@@ -8,7 +8,7 @@ import {
 } from "@/lib/zernio";
 import { sendPush } from "@/lib/push";
 import { getOwnerUserId, syncAccounts, syncAccountSnapshot, syncVideoTargets } from "@/lib/sync";
-import { pollRecentComments } from "@/lib/inbox";
+import { pollRecentComments, retryStuckItems } from "@/lib/inbox";
 import { localToUtcMs } from "@/lib/publish";
 
 // Synchronise automatiquement les statistiques de toutes les vidéos publiées
@@ -306,6 +306,8 @@ export async function GET(request: Request) {
   // Relève les commentaires récents au cas où le webhook comment.received
   // n'est pas configuré. Idempotent : les doublons sont ignorés.
   let inboxNew = 0;
+  let inboxRetried = 0;
+  let inboxEscalated = 0;
   const inboxErrors: string[] = [];
   try {
     const ownerId = await getOwnerUserId(supabase);
@@ -313,6 +315,10 @@ export async function GET(request: Request) {
       const r = await pollRecentComments(supabase, ownerId);
       inboxNew = r.newItems;
       inboxErrors.push(...r.errors);
+      // Reprend les éléments dont le tri IA a échoué (quota, panne) au lieu de les laisser bloqués.
+      const stuck = await retryStuckItems(supabase, ownerId);
+      inboxRetried = stuck.retried;
+      inboxEscalated = stuck.escalated;
     }
   } catch (e) {
     inboxErrors.push((e as Error).message);
@@ -321,6 +327,8 @@ export async function GET(request: Request) {
   return NextResponse.json({
     ok: true,
     inboxNew,
+    inboxRetried,
+    inboxEscalated,
     inboxErrors,
     synced,
     total: videos?.length || 0,
